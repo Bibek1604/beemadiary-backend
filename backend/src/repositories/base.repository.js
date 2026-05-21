@@ -17,7 +17,7 @@ class BaseRepository {
    * @returns {boolean}
    */
   hasSoftDelete() {
-    const softDeleteModels = ["admin", "company", "agent", "client", "policy", "transaction"];
+    const softDeleteModels = ["admin", "company", "agent", "client", "policy", "transaction", "bulkNotification"];
     return softDeleteModels.includes(this.modelName.toLowerCase());
   }
 

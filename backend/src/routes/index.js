@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const authRoutes = require("./auth.routes");
 const companyRoutes = require("./company.routes");
+const bulkNotificationRoutes = require("./bulkNotification.routes");
 
 /**
  * Health check endpoint
@@ -21,5 +22,7 @@ router.get("/health", (req, res) => {
 // When mounted at /api, these map to /api/admin/login, etc.
 router.use("/", authRoutes);
 router.use("/", companyRoutes);
+router.use("/", bulkNotificationRoutes);
 
 module.exports = router;
+
