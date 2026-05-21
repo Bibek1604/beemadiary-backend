@@ -98,6 +98,92 @@ class AuthService {
       },
     };
   }
+
+  async agentLogin(email, password, ipAddress, userAgent) {
+    const agentRepository = require("../repositories/agent.repository");
+    // Find agent by email
+    const agent = await agentRepository.findOne({ email });
+    if (!agent) {
+      const error = new Error("Invalid email or password");
+      error.statusCode = 401;
+      throw error;
+    }
+
+    // Check account status
+    if (agent.status !== "ACTIVE") {
+      const error = new Error("Account is inactive. Please contact your admin.");
+      error.statusCode = 403;
+      throw error;
+    }
+
+    // Verify hashed password
+    const isPasswordValid = await bcrypt.compare(password, agent.password_hash);
+    if (!isPasswordValid) {
+      const error = new Error("Invalid email or password");
+      error.statusCode = 401;
+      throw error;
+    }
+
+    // Generate JWT Auth Token
+    const token = jwt.sign(
+      {
+        id: agent.id,
+        role: "AGENT",
+        company_id: agent.company_id,
+        type: "AGENT",
+      },
+      env.JWT_SECRET,
+      { expiresIn: env.JWT_EXPIRES_IN }
+    );
+
+    // Parse token duration for DB session expiration
+    let expiresMs = 24 * 60 * 60 * 1000;
+    try {
+      const durationStr = env.JWT_EXPIRES_IN;
+      if (durationStr.endsWith("h")) {
+        expiresMs = parseInt(durationStr, 10) * 60 * 60 * 1000;
+      } else if (durationStr.endsWith("d")) {
+        expiresMs = parseInt(durationStr, 10) * 24 * 60 * 60 * 1000;
+      } else if (durationStr.endsWith("m")) {
+        expiresMs = parseInt(durationStr, 10) * 60 * 1000;
+      }
+    } catch (parseError) {}
+    const expiresAt = new Date(Date.now() + expiresMs);
+
+    // Save active session
+    await sessionRepository.create({
+      user_id: agent.id,
+      user_type: "AGENT",
+      token,
+      expires_at: expiresAt,
+      ip_address: ipAddress || null,
+      user_agent: userAgent || null,
+    });
+
+    // Save login audit log
+    await auditLogRepository.create({
+      user_id: agent.id,
+      user_type: "AGENT",
+      action: "AGENT_LOGIN",
+      details: { email: agent.email },
+      ip_address: ipAddress || null,
+    }).catch(err => {
+      console.error("Audit log creation failed during login:", err);
+    });
+
+    return {
+      token,
+      agent: {
+        id: agent.id,
+        first_name: agent.first_name,
+        last_name: agent.last_name,
+        email: agent.email,
+        status: agent.status.toLowerCase(),
+        company_id: agent.company_id,
+        role: "agent",
+      },
+    };
+  }
 }
 
 module.exports = new AuthService();

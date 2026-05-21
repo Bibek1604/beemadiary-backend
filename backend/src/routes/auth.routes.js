@@ -51,5 +51,33 @@ router.post(
   authController.adminLogin
 );
 
+/**
+ * @swagger
+ * /api/agent/login:
+ *   post:
+ *     summary: Agent Login
+ *     description: Authenticate an agent and return a JWT access token.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/AdminLoginRequest'
+ *     responses:
+ *       200:
+ *         description: Authentication successful. Returns session token.
+ *       400:
+ *         description: Validation failed or incorrect credentials.
+ *       429:
+ *         description: Too many login attempts.
+ */
+router.post(
+  "/agent/login",
+  authLimiter,
+  validate(authValidator.login),
+  authController.agentLogin
+);
 
 module.exports = router;
