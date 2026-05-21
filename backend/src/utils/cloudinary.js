@@ -69,7 +69,65 @@ const uploadFile = async (file) => {
   }
 };
 
+/**
+ * Upload image to Cloudinary (returns both url and public_id)
+ */
+const uploadImage = async (file) => {
+  if (!file) return null;
+
+  if (env.USE_CLOUDINARY && env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY) {
+    return new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { resource_type: "image", folder: "lic_diary/profiles" },
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve({
+              url: result.secure_url,
+              public_id: result.public_id
+            });
+          }
+        }
+      );
+      uploadStream.end(file.buffer);
+    });
+  } else {
+    // Fallback to local storage
+    const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
+    const filePath = path.join(uploadsDir, fileName);
+    
+    fs.writeFileSync(filePath, file.buffer);
+    return {
+      url: `/uploads/${fileName}`,
+      public_id: null
+    };
+  }
+};
+
+/**
+ * Delete image from Cloudinary
+ */
+const deleteImage = async (public_id) => {
+  if (!public_id) return true;
+  
+  if (env.USE_CLOUDINARY && env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY) {
+    return new Promise((resolve, reject) => {
+      cloudinary.uploader.destroy(public_id, (error, result) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      });
+    });
+  }
+  return true;
+};
+
 module.exports = {
   upload,
   uploadFile,
+  uploadImage,
+  deleteImage
 };

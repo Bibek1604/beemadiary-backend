@@ -83,22 +83,30 @@ model Company {
 }
 
 model Agent {
-  id            String    @id @default(uuid()) @db.Uuid
-  first_name    String
-  last_name     String
-  email         String    @unique
-  phone         String    @unique
-  password_hash String
-  status        Status    @default(ACTIVE)
-  company_id    String?   @db.Uuid
-  company       Company?  @relation(fields: [company_id], references: [id], onDelete: SetNull)
-  created_at    DateTime  @default(now())
-  updated_at    DateTime  @updatedAt
-  deleted_at    DateTime?
+  id                        String    @id @default(uuid()) @db.Uuid
+  agent_code                String?   @unique
+  full_name                 String
+  email                     String    @unique
+  phone_number              String    @unique
+  password_hash             String
+  lic_agent_code            String?   @unique
+  branch_division           String?
+  qualification             String?
+  position_designation      String?
+  short_bio                 String?
+  profile_picture           String?
+  profile_picture_public_id String?
+  status                    Status    @default(ACTIVE)
+  company_id                String?   @db.Uuid
+  company                   Company?  @relation(fields: [company_id], references: [id], onDelete: SetNull)
+  created_at                DateTime  @default(now())
+  updated_at                DateTime  @updatedAt
+  deleted_at                DateTime?
 
   clients              Client[]
   policies             Policy[]
   bulk_notifications   BulkNotification[]
+  notification_reads   NotificationRead[]
 
   @@map("agents")
 }
@@ -217,8 +225,24 @@ model BulkNotification {
   updated_at      DateTime               @updatedAt
   deleted_at      DateTime?
 
+  reads           NotificationRead[]
+
   @@index([title])
   @@index([target_type])
   @@index([created_by])
   @@map("bulk_notifications")
+}
+
+model NotificationRead {
+  id              String           @id @default(uuid()) @db.Uuid
+  notification_id String           @db.Uuid
+  notification    BulkNotification @relation(fields: [notification_id], references: [id], onDelete: Cascade)
+  agent_id        String           @db.Uuid
+  agent           Agent            @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  is_read         Boolean          @default(false)
+  read_at         DateTime?
+  created_at      DateTime         @default(now())
+
+  @@unique([notification_id, agent_id])
+  @@map("notification_reads")
 }
