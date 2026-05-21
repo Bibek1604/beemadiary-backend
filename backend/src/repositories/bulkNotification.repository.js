@@ -26,8 +26,7 @@ class BulkNotificationRepository extends BaseRepository {
       target_agent: {
         select: {
           id: true,
-          first_name: true,
-          last_name: true,
+          full_name: true,
           email: true,
         },
       },

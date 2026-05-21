@@ -1,0 +1,137 @@
+// This file shows the ADDITIONAL models needed for authentication
+// Append these to the existing prisma/schema.prisma
+
+model Session {
+  id              Int       @id @default(autoincrement())
+  user_id         Int
+  token           String    @unique @db.Text
+  refresh_token   String    @unique @db.Text
+  token_expires   DateTime
+  refresh_expires DateTime
+  ip_address      String?
+  user_agent      String?
+  device_info     String?
+  is_active       Boolean   @default(true)
+  created_at      DateTime  @default(now())
+  last_activity   DateTime  @updatedAt
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  @@index([user_id])
+  @@index([token])
+  @@index([refresh_token])
+  @@index([is_active])
+}
+
+model RefreshToken {
+  id              Int       @id @default(autoincrement())
+  user_id         Int
+  token           String    @unique @db.Text
+  expires_at      DateTime
+  revoked         Boolean   @default(false)
+  revoked_at      DateTime?
+  ip_address      String?
+  user_agent      String?
+  family_id       String?   // For token family tracking (rotation chain)
+  created_at      DateTime  @default(now())
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  @@index([user_id])
+  @@index([token])
+  @@index([family_id])
+  @@index([expires_at])
+}
+
+model AuditLog {
+  id              Int       @id @default(autoincrement())
+  user_id         Int?
+  action          String    // LOGIN, LOGOUT, PASSWORD_CHANGE, LOGIN_FAILED, etc.
+  resource        String?   // What was accessed/modified
+  resource_id     Int?      // ID of the resource
+  details         String?   @db.Text // JSON details
+  ip_address      String?
+  user_agent      String?
+  status          String    // SUCCESS, FAILURE
+  timestamp       DateTime  @default(now())
+  
+  user            User?     @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  
+  @@index([user_id])
+  @@index([action])
+  @@index([timestamp])
+  @@index([status])
+}
+
+model AccountLockout {
+  id              Int       @id @default(autoincrement())
+  user_id         Int       @unique
+  failed_attempts Int       @default(0)
+  last_attempt    DateTime?
+  locked_until    DateTime?
+  reason          String?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  @@index([locked_until])
+}
+
+model PasswordReset {
+  id              Int       @id @default(autoincrement())
+  user_id         Int
+  token           String    @unique @db.Text
+  expires_at      DateTime
+  used_at         DateTime?
+  ip_address      String?
+  created_at      DateTime  @default(now())
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  @@index([user_id])
+  @@index([token])
+  @@index([expires_at])
+}
+
+model EmailVerification {
+  id              Int       @id @default(autoincrement())
+  user_id         Int
+  email           String
+  token           String    @unique @db.Text
+  expires_at      DateTime
+  verified_at     DateTime?
+  attempts        Int       @default(0)
+  created_at      DateTime  @default(now())
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  @@unique([user_id, email])
+  @@index([token])
+  @@index([email])
+}
+
+model TwoFactorAuth {
+  id              Int       @id @default(autoincrement())
+  user_id         Int       @unique
+  secret          String    @db.Text // Encrypted TOTP secret
+  backup_codes    String    @db.Text // Encrypted backup codes (JSON)
+  enabled         Boolean   @default(false)
+  verified_at     DateTime?
+  created_at      DateTime  @default(now())
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+// Update User model to add these fields:
+// password_hash     String
+// email_verified    Boolean   @default(false)
+// twofa_enabled     Boolean   @default(false)
+// last_login        DateTime?
+// sessions          Session[]
+// refresh_tokens    RefreshToken[]
+// audit_logs        AuditLog[]
+// lockout           AccountLockout?
+// password_resets   PasswordReset[]
+// email_verifications EmailVerification[]
+// twofa             TwoFactorAuth?

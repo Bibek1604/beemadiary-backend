@@ -4,6 +4,7 @@ const authRoutes = require("./auth.routes");
 const companyRoutes = require("./company.routes");
 const bulkNotificationRoutes = require("./bulkNotification.routes");
 const agentNotificationRoutes = require("./agentNotification.routes");
+const userRoutes = require("./user.routes");
 
 /**
  * Health check endpoint
@@ -25,6 +26,7 @@ router.use("/", authRoutes);
 router.use("/", companyRoutes);
 router.use("/", bulkNotificationRoutes);
 router.use("/", agentNotificationRoutes);
+router.use("/", userRoutes);
 
 module.exports = router;
 

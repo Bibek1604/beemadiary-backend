@@ -109,9 +109,7 @@ const bulkNotificationValidator = require("../validators/bulkNotification.valida
  *                         id:
  *                           type: string
  *                           format: uuid
- *                         first_name:
- *                           type: string
- *                         last_name:
+ *                         full_name:
  *                           type: string
  *                         email:
  *                           type: string
@@ -338,9 +336,7 @@ router.get(
  *                         id:
  *                           type: string
  *                           format: uuid
- *                         first_name:
- *                           type: string
- *                         last_name:
+ *                         full_name:
  *                           type: string
  *                         email:
  *                           type: string
