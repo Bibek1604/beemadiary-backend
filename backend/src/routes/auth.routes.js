@@ -51,6 +51,13 @@ router.post(
   authController.adminLogin
 );
 
+router.post(
+  "/auth/login",
+  authLimiter,
+  validate(authValidator.login),
+  authController.adminLogin
+);
+
 /**
  * @swagger
  * /api/agent/login:
@@ -75,6 +82,46 @@ router.post(
  */
 router.post(
   "/agent/login",
+  authLimiter,
+  validate(authValidator.login),
+  authController.agentLogin
+);
+
+/**
+ * @swagger
+ * /api/users/login:
+ *   post:
+ *     summary: Agent Login (Compat)
+ *     description: Authenticate an agent. Alias for /api/agent/login.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/AgentLoginRequest'
+ *     responses:
+ *       200:
+ *         description: Authentication successful.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: boolean
+ *                 token:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *       400:
+ *         description: Validation failed or incorrect credentials.
+ *       429:
+ *         description: Too many login attempts.
+ */
+router.post(
+  "/users/login",
   authLimiter,
   validate(authValidator.login),
   authController.agentLogin

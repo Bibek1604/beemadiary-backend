@@ -12,7 +12,7 @@ const server = app.listen(PORT, () => {
 ║  Environment: ${process.env.NODE_ENV || 'development'}
 ║  Server: http://${HOST}:${PORT}          ║
 ║  Health: http://${HOST}:${PORT}/health   ║
-║  Docs: http://${HOST}:${PORT}/api/docs   ║
+║  Docs: http://${HOST}:${PORT}/api-docs   ║
 ╚════════════════════════════════════════╝
   `);
 });

@@ -152,4 +152,14 @@ router.post(
   asyncHandler((req, res) => authController.sendVerificationEmail(req, res))
 );
 
+/**
+ * GET /api/auth/me
+ * Get current user profile
+ */
+router.get(
+  '/me',
+  verifyToken,
+  asyncHandler((req, res) => authController.getCurrentUser(req, res))
+);
+
 export default router;

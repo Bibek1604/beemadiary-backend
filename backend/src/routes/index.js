@@ -5,6 +5,8 @@ const companyRoutes = require("./company.routes");
 const bulkNotificationRoutes = require("./bulkNotification.routes");
 const agentNotificationRoutes = require("./agentNotification.routes");
 const userRoutes = require("./user.routes");
+const adminCompatRoutes = require("./admin.compat.routes");
+const userPanelRoutes = require("./userPanel.routes");
 
 /**
  * Health check endpoint
@@ -24,6 +26,8 @@ router.get("/health", (req, res) => {
 // When mounted at /api, these map to /api/admin/login, etc.
 router.use("/", authRoutes);
 router.use("/", companyRoutes);
+router.use("/admin", adminCompatRoutes);
+router.use("/user-panel", userPanelRoutes);
 router.use("/", bulkNotificationRoutes);
 router.use("/", agentNotificationRoutes);
 router.use("/", userRoutes);

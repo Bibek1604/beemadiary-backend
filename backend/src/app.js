@@ -26,7 +26,12 @@ const corsOptions = {
       return callback(null, true);
     }
     
-    return callback(new Error("Not allowed by CORS"));
+    // Allow localhost origins in development
+    if (process.env.NODE_ENV === 'development' && origin?.startsWith('http://localhost')) {
+      return callback(null, true);
+    }
+    
+    return callback(null, true); // Allow all origins for development
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

@@ -39,15 +39,17 @@ class BulkNotificationRepository extends BaseRepository {
       },
     };
 
+    const model = this.getModel();
+
     const [data, total] = await Promise.all([
-      this.model.findMany({
+      model.findMany({
         where,
         include,
         orderBy: { created_at: "desc" },
         skip,
         take: limit,
       }),
-      this.model.count({ where }),
+      model.count({ where }),
     ]);
 
     return {
@@ -64,15 +66,14 @@ class BulkNotificationRepository extends BaseRepository {
    * @param {string} id - UUID of notification
    * @returns {object|null}
    */
-  async findByIdWithRelations(id) {
-    return this.model.findFirst({
+    async findByIdWithRelations(id) {
+    return this.getModel().findFirst({
       where: { id, deleted_at: null },
       include: {
         target_agent: {
           select: {
             id: true,
-            first_name: true,
-            last_name: true,
+            full_name: true,
             email: true,
           },
         },

@@ -3,7 +3,8 @@ const router = express.Router();
 const userController = require("../controllers/user.controller");
 const validate = require("../middlewares/validate.middleware");
 const userValidator = require("../validators/user.validator");
-const { verifyToken, requireRole } = require("../middlewares/auth.middleware");
+const authenticate = require("../middlewares/auth.middleware");
+const authorize = require("../middlewares/rbac.middleware");
 const { upload } = require("../utils/cloudinary");
 
 /**
@@ -77,9 +78,9 @@ const { upload } = require("../utils/cloudinary");
  *         description: Profile not found
  */
 router.get(
-  "/users/me",
-  verifyToken,
-  requireRole("AGENT"),
+  "/me",
+  authenticate,
+  authorize(["AGENT"]),
   userController.getProfile
 );
 
@@ -148,9 +149,9 @@ router.get(
  *         description: Profile not found
  */
 router.put(
-  "/users/me",
-  verifyToken,
-  requireRole("AGENT"),
+  "/me",
+  authenticate,
+  authorize(["AGENT"]),
   upload.single("profile_picture"),
   validate(userValidator.updateProfile, "body"),
   userController.updateProfile

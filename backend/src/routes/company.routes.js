@@ -1,11 +1,27 @@
 const express = require("express");
 const router = express.Router();
+const { prisma } = require("../config/db");
 const companyController = require("../controllers/company.controller");
 const authenticate = require("../middlewares/auth.middleware");
 const authorize = require("../middlewares/rbac.middleware");
 const { upload } = require("../utils/cloudinary");
 const validate = require("../middlewares/validate.middleware");
 const companyValidator = require("../validators/company.validator");
+const ApiResponse = require("../utils/apiResponse");
+
+const toIso = (value) => (value ? new Date(value).toISOString() : null);
+const normalizeStatus = (value) => String(value || "ACTIVE").toUpperCase() === "INACTIVE" ? "INACTIVE" : "ACTIVE";
+
+const serializeCompany = (company) => ({
+  id: company.id,
+  name: company.name,
+  email: company.email,
+  phone_number: company.phone_number,
+  image: company.image,
+  status: company.status,
+  created_at: toIso(company.created_at),
+  updated_at: toIso(company.updated_at),
+});
 
 /**
  * @swagger
@@ -110,5 +126,48 @@ router.post(
   validate(companyValidator.createCompany),
   companyController.createCompany
 );
+
+router.get("/admin/companies", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), async (_req, res) => {
+  const companies = await prisma.company.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } });
+  return res.status(200).json(ApiResponse.success("Companies retrieved successfully", companies.map(serializeCompany)));
+});
+
+router.get("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), async (req, res) => {
+  const company = await prisma.company.findUnique({ where: { id: req.params.id } });
+  if (!company || company.deleted_at) {
+    return res.status(404).json(ApiResponse.notFound("Company not found"));
+  }
+  return res.status(200).json(ApiResponse.success("Company retrieved successfully", serializeCompany(company)));
+});
+
+router.patch("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), upload.single("image"), async (req, res) => {
+  const company = await prisma.company.findUnique({ where: { id: req.params.id } });
+  if (!company || company.deleted_at) {
+    return res.status(404).json(ApiResponse.notFound("Company not found"));
+  }
+
+  const updated = await prisma.company.update({
+    where: { id: req.params.id },
+    data: {
+      name: req.body.name ?? undefined,
+      email: req.body.email ?? undefined,
+      phone_number: req.body.phone_number ?? undefined,
+      image: req.body.image ?? undefined,
+      status: req.body.status === undefined ? undefined : normalizeStatus(req.body.status),
+    },
+  });
+
+  return res.status(200).json(ApiResponse.success("Company updated successfully", serializeCompany(updated)));
+});
+
+router.delete("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), async (req, res) => {
+  const company = await prisma.company.findUnique({ where: { id: req.params.id } });
+  if (!company || company.deleted_at) {
+    return res.status(404).json(ApiResponse.notFound("Company not found"));
+  }
+
+  await prisma.company.update({ where: { id: req.params.id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+  return res.status(200).json(ApiResponse.success("Company deleted successfully", { id: req.params.id }));
+});
 
 module.exports = router;

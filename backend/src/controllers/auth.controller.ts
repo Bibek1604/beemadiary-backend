@@ -262,6 +262,30 @@ export class AuthController {
       ResponseHandler.success(result.message)
     );
   });
+
+  /**
+   * Get current user profile
+   * GET /api/auth/me
+   */
+  getCurrentUser = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
+        ResponseHandler.unauthorized('Authentication required')
+      );
+    }
+
+    // Return user info from JWT token
+    const user = {
+      id: req.user.id,
+      email: req.user.email,
+      role: req.user.role,
+      type: req.user.type || 'AGENT',
+    };
+
+    return res.status(CONSTANTS.STATUS_CODES.OK).json(
+      ResponseHandler.success('Current user retrieved', { user })
+    );
+  });
 }
 
 export const authController = new AuthController();

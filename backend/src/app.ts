@@ -1,6 +1,5 @@
 import express, { Express, Request, Response } from 'express';
 import 'dotenv/config';
-import path from 'path';
 import {
   securityHeaders,
   corsConfig,
@@ -14,11 +13,11 @@ import { sanitizeRequest } from './middleware/validation';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { setCSRFToken, csrfProtection } from './middleware/csrf';
 import { globalExceptionHandler } from './middleware/globalExceptionHandler';
-import { ResponseHandler } from './utils/errorResponse';
 import imageHandler from './utils/imageHandler';
 import dashboardRoutes from './routes/dashboard.routes';
 import authRoutes from './routes/auth.routes';
 import uploadRoutes from './routes/upload.routes';
+import adminRoutes from './routes/admin.routes';
 
 const app: Express = express();
 
@@ -63,6 +62,7 @@ app.get('/api/csrf-token', setCSRFToken, (req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/user-panel', csrfProtection, dashboardRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 Handler - Must be after all routes
 app.use('*', notFoundHandler);

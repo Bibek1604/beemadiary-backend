@@ -175,8 +175,7 @@ class AuthService {
       token,
       agent: {
         id: agent.id,
-        first_name: agent.first_name,
-        last_name: agent.last_name,
+        full_name: agent.full_name,
         email: agent.email,
         status: agent.status.toLowerCase(),
         company_id: agent.company_id,
