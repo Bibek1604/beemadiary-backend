@@ -92,34 +92,52 @@ const getFirstAgentId = async () => {
 router.use(authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]));
 
 router.get("/users", async (_req, res) => {
-  const [admins, agents, clients] = await Promise.all([
-    prisma.admin.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } }),
-    prisma.agent.findMany({
-      where: { deleted_at: null },
-      select: agentSelect,
-      orderBy: { created_at: "desc" },
-    }),
-    prisma.client.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } }),
-  ]);
+  try {
+    const [admins, agents, clients] = await Promise.all([
+      prisma.admin.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } }),
+      prisma.agent.findMany({
+        where: { deleted_at: null },
+        select: agentSelect,
+        orderBy: { created_at: "desc" },
+      }),
+      prisma.client.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } }),
+    ]);
 
-  const users = [...admins.map(serializeAdmin), ...agents.map(serializeAgent), ...clients.map(serializeClient)]
-    .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
+    const users = [...admins.map(serializeAdmin), ...agents.map(serializeAgent), ...clients.map(serializeClient)]
+      .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
 
-  return res.status(200).json(ApiResponse.success("Users retrieved successfully", users));
+    return res.status(200).json(ApiResponse.success("Users retrieved successfully", users));
+  } catch (error) {
+    console.error("❌ ERROR retrieving users:", {
+      message: error.message,
+      code: error.code,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json(ApiResponse.error("Unable to fetch user list", "There was a problem retrieving the user list. Please try again."));
+  }
 });
 
 router.get("/users/:id", async (req, res) => {
-  const { id } = req.params;
-  const admin = await prisma.admin.findUnique({ where: { id } });
-  if (admin && !admin.deleted_at) return res.status(200).json(ApiResponse.success("User retrieved successfully", serializeAdmin(admin)));
+  try {
+    const { id } = req.params;
+    const admin = await prisma.admin.findUnique({ where: { id } });
+    if (admin && !admin.deleted_at) return res.status(200).json(ApiResponse.success("User retrieved successfully", serializeAdmin(admin)));
 
-  const agent = await prisma.agent.findUnique({ where: { id }, select: agentSelect });
-  if (agent && !agent.deleted_at) return res.status(200).json(ApiResponse.success("User retrieved successfully", serializeAgent(agent)));
+    const agent = await prisma.agent.findUnique({ where: { id }, select: agentSelect });
+    if (agent && !agent.deleted_at) return res.status(200).json(ApiResponse.success("User retrieved successfully", serializeAgent(agent)));
 
-  const client = await prisma.client.findUnique({ where: { id } });
-  if (client && !client.deleted_at) return res.status(200).json(ApiResponse.success("User retrieved successfully", serializeClient(client)));
+    const client = await prisma.client.findUnique({ where: { id } });
+    if (client && !client.deleted_at) return res.status(200).json(ApiResponse.success("User retrieved successfully", serializeClient(client)));
 
-  return res.status(404).json(ApiResponse.notFound("User not found"));
+    return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
+  } catch (error) {
+    console.error("❌ ERROR retrieving user:", {
+      message: error.message,
+      code: error.code,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json(ApiResponse.error("Unable to fetch user details", "There was a problem fetching the user information. Please try again."));
+  }
 });
 
 /**
@@ -175,167 +193,306 @@ router.get("/users/:id", async (req, res) => {
  *         description: Unauthorized
  */
 router.post("/users", async (req, res) => {
-  const role = String(req.body.role || "AGENT").toUpperCase();
-  const password = normalizeText(req.body.password);
-  if (!password) return res.status(400).json(ApiResponse.validationError([{ field: "password", message: "Password is required" }]));
+  try {
+    const role = String(req.body.role || "AGENT").toUpperCase();
+    const password = normalizeText(req.body.password);
+    if (!password) return res.status(400).json(ApiResponse.error("Password required", "Please enter a password for the new user account."));
 
-  if (role === "ADMIN") {
-    const admin = await prisma.admin.create({
-      data: {
-        username: normalizeText(req.body.username),
-        email: normalizeText(req.body.email),
-        phone: normalizeText(req.body.phone_number),
-        password_hash: await bcrypt.hash(password, 10),
-        status: normalizeStatus(req.body.is_active),
-        role: "ADMIN",
-      },
+    if (role === "ADMIN") {
+      try {
+        const admin = await prisma.admin.create({
+          data: {
+            username: normalizeText(req.body.username),
+            email: normalizeText(req.body.email),
+            phone: normalizeText(req.body.phone_number),
+            password_hash: await bcrypt.hash(password, 10),
+            status: normalizeStatus(req.body.is_active),
+            role: "ADMIN",
+          },
+        });
+        return res.status(201).json(ApiResponse.success("Admin created successfully", serializeAdmin(admin)));
+      } catch (err) {
+        if (err.code === 'P2002') {
+          const field = err.meta?.target?.[0] || 'field';
+          const fieldLabel = field === 'email' ? 'Email' : field === 'username' ? 'Username' : field === 'phone' ? 'Phone number' : field;
+          return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
+        }
+        throw err;
+      }
+    }
+
+    if (role === "CLIENT") {
+      const agentId = req.body.agent_id ? String(req.body.agent_id) : await getFirstAgentId();
+      if (!agentId) return res.status(400).json(ApiResponse.error("No agents available", "An agent must be assigned to this client. Please create an agent first."));
+
+      try {
+        const client = await prisma.client.create({
+          data: {
+            first_name: normalizeText(req.body.first_name),
+            last_name: normalizeText(req.body.last_name),
+            email: normalizeText(req.body.email),
+            phone: normalizeText(req.body.phone_number),
+            address: normalizeText(req.body.address, ""),
+            password_hash: await bcrypt.hash(password, 10),
+            status: normalizeStatus(req.body.is_active),
+            agent_id: agentId,
+          },
+        });
+        return res.status(201).json(ApiResponse.success("Client created successfully", serializeClient(client)));
+      } catch (err) {
+        if (err.code === 'P2002') {
+          const field = err.meta?.target?.[0] || 'field';
+          const fieldLabel = field === 'email' ? 'Email' : field === 'phone' ? 'Phone number' : field;
+          return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
+        }
+        throw err;
+      }
+    }
+
+    try {
+      const agent = await prisma.agent.create({
+        select: agentSelect,
+        data: {
+          full_name: `${normalizeText(req.body.first_name)} ${normalizeText(req.body.last_name)}`.trim(),
+          email: normalizeText(req.body.email),
+          phone_number: normalizeText(req.body.phone_number),
+          password_hash: await bcrypt.hash(password, 10),
+          status: normalizeStatus(req.body.is_active),
+          company_id: req.body.company ? String(req.body.company) : null,
+        },
+      });
+      return res.status(201).json(ApiResponse.success("Agent created successfully", serializeAgent({ ...agent, _count: { clients: 0 } })));
+    } catch (err) {
+      if (err.code === 'P2002') {
+        const field = err.meta?.target?.[0] || 'field';
+        const fieldLabel = field === 'email' ? 'Email' : field === 'phone_number' ? 'Phone number' : field;
+        return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
+      }
+      throw err;
+    }
+  } catch (error) {
+    // Log exact error details in terminal for debugging
+    console.error("❌ ERROR creating user:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+      meta: error.meta,
+      timestamp: new Date().toISOString()
     });
-    return res.status(201).json(ApiResponse.success("Admin created successfully", serializeAdmin(admin)));
+
+    if (error.code === 'P2025') {
+      return res.status(400).json(ApiResponse.error("Invalid reference", "The referenced company or agent does not exist. Please select a valid option."));
+    }
+    return res.status(500).json(ApiResponse.error("Could not create user", "There was a problem creating the user account. Please check your information and try again."));
   }
-
-  if (role === "CLIENT") {
-    const agentId = req.body.agent_id ? String(req.body.agent_id) : await getFirstAgentId();
-    if (!agentId) return res.status(400).json(ApiResponse.validationError([{ field: "agent_id", message: "At least one agent is required" }]));
-
-    const client = await prisma.client.create({
-      data: {
-        first_name: normalizeText(req.body.first_name),
-        last_name: normalizeText(req.body.last_name),
-        email: normalizeText(req.body.email),
-        phone: normalizeText(req.body.phone_number),
-        address: normalizeText(req.body.address, ""),
-        password_hash: await bcrypt.hash(password, 10),
-        status: normalizeStatus(req.body.is_active),
-        agent_id: agentId,
-      },
-    });
-    return res.status(201).json(ApiResponse.success("Client created successfully", serializeClient(client)));
-  }
-
-  const agent = await prisma.agent.create({
-    select: agentSelect,
-    data: {
-      full_name: `${normalizeText(req.body.first_name)} ${normalizeText(req.body.last_name)}`.trim(),
-      email: normalizeText(req.body.email),
-      phone_number: normalizeText(req.body.phone_number),
-      password_hash: await bcrypt.hash(password, 10),
-      status: normalizeStatus(req.body.is_active),
-      company_id: req.body.company ? String(req.body.company) : null,
-    },
-  });
-
-  return res.status(201).json(ApiResponse.success("Agent created successfully", serializeAgent({ ...agent, _count: { clients: 0 } })));
 });
 
 router.patch("/users/:id", async (req, res) => {
-  const { id } = req.params;
-  const admin = await prisma.admin.findUnique({ where: { id } });
-  if (admin && !admin.deleted_at) {
-    const updated = await prisma.admin.update({
-      where: { id },
-      data: {
-        username: req.body.username ?? undefined,
-        email: req.body.email ?? undefined,
-        phone: req.body.phone_number ?? undefined,
-        status: req.body.is_active === undefined ? undefined : normalizeStatus(req.body.is_active),
-      },
-    });
-    return res.status(200).json(ApiResponse.success("User updated successfully", serializeAdmin(updated)));
-  }
+  try {
+    const { id } = req.params;
+    const admin = await prisma.admin.findUnique({ where: { id } });
+    if (admin && !admin.deleted_at) {
+      try {
+        const updated = await prisma.admin.update({
+          where: { id },
+          data: {
+            username: req.body.username ?? undefined,
+            email: req.body.email ?? undefined,
+            phone: req.body.phone_number ?? undefined,
+            status: req.body.is_active === undefined ? undefined : normalizeStatus(req.body.is_active),
+          },
+        });
+        return res.status(200).json(ApiResponse.success("User updated successfully", serializeAdmin(updated)));
+      } catch (err) {
+        if (err.code === 'P2002') {
+          const field = err.meta?.target?.[0] || 'field';
+          const fieldLabel = field === 'email' ? 'Email' : field === 'username' ? 'Username' : field === 'phone' ? 'Phone number' : field;
+          return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
+        }
+        throw err;
+      }
+    }
 
-  const agent = await prisma.agent.findUnique({ where: { id }, select: agentSelect });
-  if (agent && !agent.deleted_at) {
-    const updated = await prisma.agent.update({
-      where: { id },
-      select: agentSelect,
-      data: {
-        full_name: req.body.first_name || req.body.last_name ? `${normalizeText(req.body.first_name || agent.full_name)} ${normalizeText(req.body.last_name || "")}`.trim() : undefined,
-        email: req.body.email ?? undefined,
-        phone_number: req.body.phone_number ?? undefined,
-        status: req.body.is_active === undefined ? undefined : normalizeStatus(req.body.is_active),
-        company_id: req.body.company ? String(req.body.company) : undefined,
-      },
-    });
-    return res.status(200).json(ApiResponse.success("User updated successfully", serializeAgent(updated)));
-  }
+    const agent = await prisma.agent.findUnique({ where: { id }, select: agentSelect });
+    if (agent && !agent.deleted_at) {
+      try {
+        const updated = await prisma.agent.update({
+          where: { id },
+          select: agentSelect,
+          data: {
+            full_name: req.body.first_name || req.body.last_name ? `${normalizeText(req.body.first_name || agent.full_name)} ${normalizeText(req.body.last_name || "")}`.trim() : undefined,
+            email: req.body.email ?? undefined,
+            phone_number: req.body.phone_number ?? undefined,
+            status: req.body.is_active === undefined ? undefined : normalizeStatus(req.body.is_active),
+            company_id: req.body.company ? String(req.body.company) : undefined,
+          },
+        });
+        return res.status(200).json(ApiResponse.success("User updated successfully", serializeAgent(updated)));
+      } catch (err) {
+        if (err.code === 'P2002') {
+          const field = err.meta?.target?.[0] || 'field';
+          const fieldLabel = field === 'email' ? 'Email' : field === 'phone_number' ? 'Phone number' : field;
+          return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
+        }
+        throw err;
+      }
+    }
 
-  const client = await prisma.client.findUnique({ where: { id } });
-  if (client && !client.deleted_at) {
-    const updated = await prisma.client.update({
-      where: { id },
-      data: {
-        first_name: req.body.first_name ?? undefined,
-        last_name: req.body.last_name ?? undefined,
-        email: req.body.email ?? undefined,
-        phone: req.body.phone_number ?? undefined,
-        address: req.body.address ?? undefined,
-        status: req.body.is_active === undefined ? undefined : normalizeStatus(req.body.is_active),
-      },
-    });
-    return res.status(200).json(ApiResponse.success("User updated successfully", serializeClient(updated)));
-  }
+    const client = await prisma.client.findUnique({ where: { id } });
+    if (client && !client.deleted_at) {
+      try {
+        const updated = await prisma.client.update({
+          where: { id },
+          data: {
+            first_name: req.body.first_name ?? undefined,
+            last_name: req.body.last_name ?? undefined,
+            email: req.body.email ?? undefined,
+            phone: req.body.phone_number ?? undefined,
+            address: req.body.address ?? undefined,
+            status: req.body.is_active === undefined ? undefined : normalizeStatus(req.body.is_active),
+          },
+        });
+        return res.status(200).json(ApiResponse.success("User updated successfully", serializeClient(updated)));
+      } catch (err) {
+        if (err.code === 'P2002') {
+          const field = err.meta?.target?.[0] || 'field';
+          const fieldLabel = field === 'email' ? 'Email' : field === 'phone' ? 'Phone number' : field;
+          return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
+        }
+        throw err;
+      }
+    }
 
-  return res.status(404).json(ApiResponse.notFound("User not found"));
+    return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
+  } catch (error) {
+    // Log exact error details in terminal for debugging
+    console.error("❌ ERROR updating user:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+      meta: error.meta,
+      timestamp: new Date().toISOString()
+    });
+
+    if (error.code === 'P2025') {
+      return res.status(400).json(ApiResponse.error("Invalid reference", "The referenced company or agent does not exist. Please select a valid option."));
+    }
+    return res.status(500).json(ApiResponse.error("Could not update user", "There was a problem updating the user account. Please check your information and try again."));
+  }
 });
 
 router.delete("/users/:id", async (req, res) => {
-  const { id } = req.params;
-  const admin = await prisma.admin.findUnique({ where: { id } });
-  if (admin && !admin.deleted_at) {
-    await prisma.admin.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
-    return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
-  }
+  try {
+    const { id } = req.params;
+    const admin = await prisma.admin.findUnique({ where: { id } });
+    if (admin && !admin.deleted_at) {
+      await prisma.admin.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+      return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
+    }
 
-  const agent = await prisma.agent.findUnique({ where: { id }, select: { id: true, deleted_at: true } });
-  if (agent && !agent.deleted_at) {
-    await prisma.agent.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
-    return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
-  }
+    const agent = await prisma.agent.findUnique({ where: { id }, select: { id: true, deleted_at: true } });
+    if (agent && !agent.deleted_at) {
+      await prisma.agent.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+      return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
+    }
 
-  const client = await prisma.client.findUnique({ where: { id } });
-  if (client && !client.deleted_at) {
-    await prisma.client.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
-    return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
-  }
+    const client = await prisma.client.findUnique({ where: { id } });
+    if (client && !client.deleted_at) {
+      await prisma.client.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+      return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
+    }
 
-  return res.status(404).json(ApiResponse.notFound("User not found"));
+    return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
+  } catch (error) {
+    console.error("❌ ERROR deleting user:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json(ApiResponse.error("Could not delete user", "There was a problem deleting the user account. Please try again."));
+  }
 });
 
 router.get("/companies", async (_req, res) => {
-  const companies = await prisma.company.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } });
-  return res.status(200).json(ApiResponse.success("Companies retrieved successfully", companies.map(serializeCompany)));
+  try {
+    const companies = await prisma.company.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } });
+    return res.status(200).json(ApiResponse.success("Companies retrieved successfully", companies.map(serializeCompany)));
+  } catch (error) {
+    console.error("❌ ERROR retrieving companies:", {
+      message: error.message,
+      code: error.code,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json(ApiResponse.error("Unable to fetch companies", "There was a problem retrieving the company list. Please try again."));
+  }
 });
 
 router.get("/companies/:id", async (req, res) => {
-  const company = await prisma.company.findUnique({ where: { id: req.params.id } });
-  if (!company || company.deleted_at) return res.status(404).json(ApiResponse.notFound("Company not found"));
-  return res.status(200).json(ApiResponse.success("Company retrieved successfully", serializeCompany(company)));
+  try {
+    const company = await prisma.company.findUnique({ where: { id: req.params.id } });
+    if (!company || company.deleted_at) return res.status(404).json(ApiResponse.error("Company not found", "The company you are looking for does not exist or has been deleted."));
+    return res.status(200).json(ApiResponse.success("Company retrieved successfully", serializeCompany(company)));
+  } catch (error) {
+    console.error("❌ ERROR retrieving company:", {
+      message: error.message,
+      code: error.code,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json(ApiResponse.error("Unable to fetch company", "There was a problem fetching the company information. Please try again."));
+  }
 });
 
 router.patch("/companies/:id", async (req, res) => {
-  const company = await prisma.company.findUnique({ where: { id: req.params.id } });
-  if (!company || company.deleted_at) return res.status(404).json(ApiResponse.notFound("Company not found"));
+  try {
+    const company = await prisma.company.findUnique({ where: { id: req.params.id } });
+    if (!company || company.deleted_at) return res.status(404).json(ApiResponse.error("Company not found", "The company you are looking for does not exist or has been deleted."));
 
-  const updated = await prisma.company.update({
-    where: { id: req.params.id },
-    data: {
-      name: req.body.name ?? undefined,
-      email: req.body.email ?? undefined,
-      phone_number: req.body.phone_number ?? undefined,
-      image: req.body.image ?? undefined,
-      status: req.body.status === undefined ? undefined : normalizeStatus(req.body.status),
-    },
-  });
+    const updated = await prisma.company.update({
+      where: { id: req.params.id },
+      data: {
+        name: req.body.name ?? undefined,
+        email: req.body.email ?? undefined,
+        phone_number: req.body.phone_number ?? undefined,
+        image: req.body.image ?? undefined,
+        status: req.body.status === undefined ? undefined : normalizeStatus(req.body.status),
+      },
+    });
 
-  return res.status(200).json(ApiResponse.success("Company updated successfully", serializeCompany(updated)));
+    return res.status(200).json(ApiResponse.success("Company updated successfully", serializeCompany(updated)));
+  } catch (error) {
+    console.error("❌ ERROR updating company:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+      meta: error.meta,
+      timestamp: new Date().toISOString()
+    });
+    if (error.code === 'P2002') {
+      const field = error.meta?.target?.[0] || 'field';
+      const fieldLabel = field === 'email' ? 'Email' : field === 'phone_number' ? 'Phone number' : field === 'name' ? 'Name' : field;
+      return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
+    }
+    return res.status(500).json(ApiResponse.error("Could not update company", "There was a problem updating the company information. Please check your details and try again."));
+  }
 });
 
 router.delete("/companies/:id", async (req, res) => {
-  const company = await prisma.company.findUnique({ where: { id: req.params.id } });
-  if (!company || company.deleted_at) return res.status(404).json(ApiResponse.notFound("Company not found"));
+  try {
+    const company = await prisma.company.findUnique({ where: { id: req.params.id } });
+    if (!company || company.deleted_at) return res.status(404).json(ApiResponse.error("Company not found", "The company you are looking for does not exist or has been deleted."));
 
-  await prisma.company.update({ where: { id: req.params.id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
-  return res.status(200).json(ApiResponse.success("Company deleted successfully", { id: req.params.id }));
+    await prisma.company.update({ where: { id: req.params.id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+    return res.status(200).json(ApiResponse.success("Company deleted successfully", { id: req.params.id }));
+  } catch (error) {
+    console.error("❌ ERROR deleting company:", {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(500).json(ApiResponse.error("Could not delete company", "There was a problem deleting the company. Please try again."));
+  }
 });
 
 module.exports = router;

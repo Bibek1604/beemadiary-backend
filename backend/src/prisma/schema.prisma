@@ -119,6 +119,22 @@ model Client {
   phone         String    @unique
   password_hash String?
   address       String
+  secondary_phone String?
+  dob           DateTime?
+  age           Int?
+  gender        String?
+  nominee_name  String?
+  relation_with_nominee String?
+  profession    String?
+  member_group  String?
+  reason_for_insurance String?
+  profile_picture String?
+  image         String?
+  document      String?
+  document_2    String?
+  documents     Json?
+  images        Json?
+  additional_documents Json?
   status        Status    @default(ACTIVE)
   agent_id      String    @db.Uuid
   agent         Agent     @relation(fields: [agent_id], references: [id], onDelete: Cascade)
@@ -138,6 +154,19 @@ model Policy {
   type            String
   coverage_amount Decimal      @db.Decimal(12, 2)
   premium_amount  Decimal      @db.Decimal(12, 2)
+  plan_name       String?
+  plan_no         String?
+  policy_term     String?
+  sum_assured     Decimal?     @db.Decimal(12, 2)
+  ab_pwb          String?
+  doc             DateTime?
+  maturity_time   String?
+  discount_scheme String?
+  premium_due_date DateTime?
+  bank_account_details String?
+  branch          String?
+  premium_due_paid String?
+  policy_status   String?
   status          PolicyStatus @default(PENDING)
   start_date      DateTime
   end_date        DateTime

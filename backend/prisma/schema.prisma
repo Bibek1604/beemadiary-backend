@@ -93,6 +93,7 @@ model Agent {
   short_bio                 String?
   profile_picture           String?
   profile_picture_public_id String?
+  security_pin              String?
   status                    Status    @default(ACTIVE)
   company_id                String?   @db.Uuid
   created_at                DateTime  @default(now())
@@ -107,20 +108,38 @@ model Agent {
 }
 
 model Client {
-  id            String    @id @default(uuid()) @db.Uuid
-  first_name    String
-  last_name     String
-  email         String    @unique
-  phone         String    @unique
-  password_hash String?
-  address       String
-  status        Status    @default(ACTIVE)
-  agent_id      String    @db.Uuid
-  created_at    DateTime  @default(now())
-  updated_at    DateTime  @updatedAt
-  deleted_at    DateTime?
+  id                        String    @id @default(uuid()) @db.Uuid
+  client_id                 String?   @unique  // Enrollment ID for searching
+  first_name                String
+  last_name                 String
+  email                     String    @unique
+  phone                     String    @unique
+  secondary_phone           String?
+  password_hash             String?
+  address                   String
+  dob                       DateTime?
+  age                       Int?
+  gender                    String?
+  nominee_name              String?
+  relation_with_nominee     String?
+  profession                String?
+  member_group              String?
+  reason_for_insurance      String?
+  profile_picture           String?
+  profile_picture_public_id String?
+  image1                    String?
+  image1_public_id          String?
+  image2                    String?
+  image2_public_id          String?
+  security_pin              String?
+  status                    Status    @default(ACTIVE)
+  agent_id                  String    @db.Uuid
+  created_at                DateTime  @default(now())
+  updated_at                DateTime  @updatedAt
+  deleted_at                DateTime?
 
-  agent Agent @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  agent    Agent     @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  policies Policy[]
 
   @@map("clients")
 }
@@ -152,17 +171,32 @@ model AuditLog {
 }
 
 model Policy {
-  id            String       @id @default(uuid()) @db.Uuid
-  policy_number String       @unique
-  name          String
-  type          String
-  status        PolicyStatus @default(PENDING)
-  client_id     String       @db.Uuid
-  agent_id      String       @db.Uuid
-  company_id    String       @db.Uuid
-  created_at    DateTime     @default(now())
-  updated_at    DateTime     @updatedAt
-  deleted_at    DateTime?
+  id                String       @id @default(uuid()) @db.Uuid
+  policy_number     String       @unique
+  plan_name         String
+  plan_no           String
+  policy_term       String?      // Premium Term (e.g., "10 years")
+  sum_assured        Decimal?     @db.Decimal(15, 2)
+  ab_pwb            String?      // Additional Benefit / Partial Withdrawal Benefit
+  doc               String?      // Date of Commencement (AD/BS)
+  maturity_time     DateTime?
+  premium_amount    Decimal?     @db.Decimal(12, 2)
+  discount_scheme   String?
+  premium_due_date  String?      // AD/BS format
+  bank_name         String?
+  bank_account      String?
+  branch            String?
+  premium_paid      Decimal?     @db.Decimal(12, 2)
+  status            PolicyStatus @default(PENDING)
+  client_id         String       @db.Uuid
+  agent_id          String       @db.Uuid
+  company_id        String?      @db.Uuid
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  deleted_at        DateTime?
+
+  client       Client        @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  transactions Transaction[]
 
   @@map("policies")
 }
@@ -178,6 +212,8 @@ model Transaction {
   created_at       DateTime          @default(now())
   updated_at       DateTime          @updatedAt
   deleted_at       DateTime?
+
+  policy           Policy            @relation(fields: [policy_id], references: [id], onDelete: Cascade)
 
   @@map("transactions")
 }
