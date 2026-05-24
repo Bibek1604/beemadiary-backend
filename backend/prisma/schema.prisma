@@ -103,6 +103,8 @@ model Agent {
   clients              Client[]
   bulk_notifications   BulkNotification[]
   notification_reads   NotificationRead[]
+  events               Event[]
+  personal_notes       PersonalNote[]
 
   @@map("agents")
 }
@@ -171,7 +173,7 @@ model AuditLog {
 }
 
 model Policy {
-  id                String       @id @default(uuid()) @db.Uuid
+  id                String       @id @default(uuid())
   policy_number     String       @unique
   plan_name         String
   plan_no           String
@@ -262,4 +264,52 @@ model NotificationRead {
 
   @@unique([notification_id, agent_id])
   @@map("notification_reads")
+}
+
+model Event {
+  id                   String    @id @default(uuid()) @db.Uuid
+  title                String
+  description          String?   @db.Text
+  event_type           String    @default("OTHER") // MEETING, FOLLOW_UP, RENEWAL, PREMIUM, PERSONAL, OTHER
+  event_date           DateTime
+  event_time           String?   // HH:MM format
+  is_all_day           Boolean   @default(false)
+  location             String?
+  color_label          String    @default("indigo")
+  is_recurring         Boolean   @default(false)
+  recurrence_pattern   String?   // DAILY, WEEKLY, MONTHLY, YEARLY
+  recurrence_end_date  DateTime?
+  parent_event_id      String?   @db.Uuid
+  reminder_minutes     Int?
+  agent_id             String    @db.Uuid
+  client_id            String?   @db.Uuid
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+  deleted_at           DateTime?
+
+  agent   Agent   @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id])
+  @@index([event_date])
+  @@index([deleted_at])
+  @@map("events")
+}
+
+model PersonalNote {
+  id              String    @id @default(uuid()) @db.Uuid
+  title           String
+  content         String    @db.Text
+  category        String?   // GENERAL, REMINDER, FOLLOW_UP, etc.
+  color_label     String    @default("indigo")
+  is_pinned       Boolean   @default(false)
+  agent_id        String    @db.Uuid
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  deleted_at      DateTime?
+
+  agent   Agent   @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id])
+  @@index([deleted_at])
+  @@map("personal_notes")
 }

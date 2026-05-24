@@ -14,6 +14,8 @@ const clientPersonalRoutes = require("./clientPersonal.routes");
 const clientDocumentsRoutes = require("./clientDocuments.routes");
 const policyDetailsRoutes = require("./policyDetails.routes");
 const policyBankDetailsRoutes = require("./policyBankDetails.routes");
+const notesRoutes = require("./notes.routes");
+const targetsRoutes = require("./targets.routes");
 const bcrypt = require("bcryptjs");
 const { prisma } = require("../config/db");
 
@@ -100,6 +102,8 @@ router.use("/", clientPersonalRoutes);
 router.use("/", clientDocumentsRoutes);
 router.use("/", policyDetailsRoutes);
 router.use("/", policyBankDetailsRoutes);
+router.use("/", notesRoutes);
+router.use("/", targetsRoutes);
 
 module.exports = router;
 

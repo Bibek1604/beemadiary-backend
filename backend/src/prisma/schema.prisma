@@ -107,6 +107,8 @@ model Agent {
   policies             Policy[]
   bulk_notifications   BulkNotification[]
   notification_reads   NotificationRead[]
+  notes                Note[]
+  events               Event[]
 
   @@map("agents")
 }
@@ -143,12 +145,13 @@ model Client {
   deleted_at    DateTime?
 
   policies      Policy[]
+  events        Event[]
 
   @@map("clients")
 }
 
 model Policy {
-  id              String       @id @default(uuid()) @db.Uuid
+  id              String       @id @default(uuid())
   policy_number   String       @unique
   name            String
   type            String
@@ -274,4 +277,85 @@ model NotificationRead {
 
   @@unique([notification_id, agent_id])
   @@map("notification_reads")
+}
+
+enum NoteTag {
+  GENERAL
+  IMPORTANT
+  FOLLOW_UP
+  TODO
+}
+
+model Note {
+  id         String   @id @default(uuid())
+  title      String?  @db.VarChar(500) // Auto-generated from content if not provided
+  content    String   @db.Text // Required - main note content
+  tag        NoteTag  @default(GENERAL) // Tag for categorization
+  agent_id   String   @db.Uuid // Agent who created the note
+  agent      Agent    @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  deleted_at DateTime? // Soft delete support
+
+  @@index([agent_id])
+  @@index([tag])
+  @@index([created_at])
+  @@map("notes")
+}
+
+enum EventType {
+  MEETING
+  FOLLOW_UP
+  RENEWAL
+  PREMIUM
+  PERSONAL
+  OTHER
+}
+
+enum RecurrencePattern {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+model Event {
+  id              String            @id @default(uuid())
+  title           String            @db.VarChar(255) // Event title
+  description     String?           @db.Text // Event description
+  event_type      EventType         @default(OTHER) // Type of event
+  event_date      DateTime          // Date of the event
+  event_time      String?           // Time in HH:MM format (optional for all-day events)
+  is_all_day      Boolean           @default(false) // Whether this is an all-day event
+  location        String?           @db.VarChar(500) // Location of the event
+  color_label     String?           @default("indigo") // Color category (indigo, pink, rose, green, etc.)
+
+  // Recurrence support
+  is_recurring    Boolean           @default(false) // Whether this event repeats
+  recurrence_pattern RecurrencePattern? // How the event recurs
+  recurrence_end_date DateTime?      // When recurrence stops
+  parent_event_id String?           // ID of parent if this is a recurring instance
+
+  // Reminders
+  reminder_minutes Int?             // Reminder before event in minutes
+
+  // Ownership
+  agent_id        String            @db.Uuid // Agent who created the event
+  agent           Agent             @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  // Client association (optional - for client-specific events)
+  client_id       String?           @db.Uuid
+  client          Client?           @relation(fields: [client_id], references: [id], onDelete: SetNull)
+
+  // Metadata
+  created_at      DateTime          @default(now())
+  updated_at      DateTime          @updatedAt
+  deleted_at      DateTime?         // Soft delete support
+
+  @@index([agent_id])
+  @@index([event_date])
+  @@index([event_type])
+  @@index([is_recurring])
+  @@index([created_at])
+  @@map("events")
 }

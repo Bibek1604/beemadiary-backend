@@ -1,4 +1,5 @@
 import { UserRole } from '@prisma/client';
+import type { Request } from 'express';
 
 export interface JWTPayload {
   id: number;
@@ -6,7 +7,7 @@ export interface JWTPayload {
   role: UserRole;
 }
 
-export interface AuthenticatedRequest extends Express.Request {
+export interface AuthenticatedRequest extends Request {
   user?: JWTPayload;
 }
 

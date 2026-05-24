@@ -1,5 +1,7 @@
 import express, { Express, Request, Response } from 'express';
 import 'dotenv/config';
+import swaggerUi from 'swagger-ui-express';
+import swaggerJsdoc from 'swagger-jsdoc';
 import {
   securityHeaders,
   corsConfig,
@@ -18,6 +20,10 @@ import dashboardRoutes from './routes/dashboard.routes';
 import authRoutes from './routes/auth.routes';
 import uploadRoutes from './routes/upload.routes';
 import adminRoutes from './routes/admin.routes';
+import notesRoutes from './routes/notes.routes';
+import calendarRoutes from './routes/calendar.routes';
+import targetsRoutes from './routes/targets.routes';
+import swaggerOptions from './docs/swagger-complete';
 
 const app: Express = express();
 
@@ -41,6 +47,11 @@ app.use(xssProtection);
 app.use(preventParamPollution);
 app.use(sanitizeRequest);
 
+// Swagger API Documentation
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
+
 // Health Check Route
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
@@ -63,6 +74,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/user-panel', csrfProtection, dashboardRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api', notesRoutes);
+app.use('/api', targetsRoutes);
+app.use('/api/calendar', calendarRoutes);
 
 // 404 Handler - Must be after all routes
 app.use('*', notFoundHandler);

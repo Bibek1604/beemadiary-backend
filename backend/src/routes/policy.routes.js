@@ -200,11 +200,27 @@ router.get("/policy/search", async (req, res) => {
       include: {
         client: {
           select: {
+            id: true,
             client_id: true,
             first_name: true,
             last_name: true,
-            phone: true,
             email: true,
+            phone: true,
+            secondary_phone: true,
+            address: true,
+            dob: true,
+            age: true,
+            gender: true,
+            profession: true,
+            member_group: true,
+            nominee_name: true,
+            relation_with_nominee: true,
+            reason_for_insurance: true,
+            image: true,
+            profile_picture: true,
+            status: true,
+            created_at: true,
+            updated_at: true,
           },
         },
       },
@@ -218,6 +234,128 @@ router.get("/policy/search", async (req, res) => {
     console.error("[Policy Search Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to search policies", null, 500)
+    );
+  }
+});
+
+/**
+ * GET /api/policy/outdated
+ * Get all policies with outdated/unpaid premium dues (6+ months)
+ */
+router.get("/policy/outdated", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+    console.log("🔍 [Outdated Policies] AgentId:", agentId);
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Get all policies for this agent (excluding deleted and already lapsed)
+    const policies = await prisma.policy.findMany({
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      include: {
+        client: true,
+      },
+    });
+
+    // Filter policies where premium due date is 6+ months old
+    const outdatedPolicies = policies.filter(p => {
+      if (!p.premium_due_date) return false;
+      if (p.status === 'LAPSED') return false;
+      const dueDate = new Date(p.premium_due_date);
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      return dueDate <= sixMonthsAgo;
+    });
+
+    const outdatedWithDaysOverdue = outdatedPolicies.map(p => ({
+      ...p,
+      days_overdue: Math.floor((new Date() - new Date(p.premium_due_date)) / (1000 * 60 * 60 * 24)),
+      months_overdue: Math.floor((new Date() - new Date(p.premium_due_date)) / (1000 * 60 * 60 * 24 * 30)),
+    }));
+
+    res.status(200).json(
+      ApiResponse.success(
+        `Found ${outdatedWithDaysOverdue.length} policies with outdated premium dues (6+ months)`,
+        outdatedWithDaysOverdue
+      )
+    );
+  } catch (error) {
+    console.error("❌ [Get Outdated Policies Error]:", error?.message);
+    res.status(500).json(
+      ApiResponse.error("Failed to fetch outdated policies", null, 500)
+    );
+  }
+});
+
+/**
+ * GET /api/policy/lapsed
+ * Get all policies with LAPSED status (premium not paid for 6+ months)
+ */
+router.get("/policy/lapsed", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+    console.log("🔍 [Lapsed Policies] AgentId:", agentId);
+    console.log("🔍 [Lapsed Policies] User:", req.user);
+
+    if (!agentId) {
+      console.error("❌ [Lapsed Policies] No agent ID found");
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Get all lapsed policies for this agent
+    console.log("🔍 [Lapsed Policies] Querying with agent_id:", agentId);
+    const lapsedPolicies = await prisma.policy.findMany({
+      where: {
+        agent_id: agentId,
+        status: "LAPSED",
+        deleted_at: null,
+      },
+      include: {
+        client: true,
+      },
+      take: 100,
+    });
+
+    console.log("✅ [Lapsed Policies] Found:", lapsedPolicies.length, "policies");
+
+    // Add calculated fields
+    const policiesWithOverdue = lapsedPolicies.map(policy => {
+      const daysCalc = policy.premium_due_date
+        ? Math.floor((new Date() - new Date(policy.premium_due_date)) / (1000 * 60 * 60 * 24))
+        : 0;
+      const monthsCalc = policy.premium_due_date
+        ? Math.floor((new Date() - new Date(policy.premium_due_date)) / (1000 * 60 * 60 * 24 * 30))
+        : 0;
+
+      return {
+        ...policy,
+        days_overdue: daysCalc,
+        months_overdue: monthsCalc,
+      };
+    });
+
+    console.log("✅ [Lapsed Policies] Returning:", policiesWithOverdue.length, "policies with overdue data");
+    res.status(200).json(
+      ApiResponse.success(
+        `Found ${policiesWithOverdue.length} lapsed policies`,
+        policiesWithOverdue
+      )
+    );
+  } catch (error) {
+    console.error("❌ [Get Lapsed Policies Error] Full Error:", error);
+    console.error("❌ [Get Lapsed Policies Error] Message:", error?.message);
+    console.error("❌ [Get Lapsed Policies Error] Stack:", error?.stack);
+    res.status(500).json(
+      ApiResponse.error("Failed to get lapsed policies", null, 500)
     );
   }
 });
@@ -421,19 +559,205 @@ router.delete("/policy/:policyId", async (req, res) => {
       );
     }
 
-    // Soft delete
-    await prisma.policy.update({
+    const deleted = await prisma.policy.update({
       where: { id: policyId },
-      data: { deleted_at: new Date() },
+      data: {
+        deleted_at: new Date(),
+      },
     });
 
     res.status(200).json(
-      ApiResponse.success("Policy deleted successfully", null)
+      ApiResponse.success("Policy deleted successfully", {
+        id: deleted.id,
+        deleted_at: deleted.deleted_at,
+      })
     );
   } catch (error) {
     console.error("[Delete Policy Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to delete policy", null, 500)
+    );
+  }
+});
+
+/**
+ * POST /api/policy/sync-lapsed
+ * Automatically update policy status to LAPSED for all policies with premium due 6+ months ago
+ * Only for admin or for agent's own policies
+ */
+router.post("/policy/sync-lapsed", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+    const isAdmin = req.user?.role === "admin";
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Build query based on user role
+    const whereClause = isAdmin ? {} : { agent_id: agentId };
+
+    // Get all non-lapsed, non-deleted policies
+    const policies = await prisma.policy.findMany({
+      where: {
+        ...whereClause,
+        status: { not: "LAPSED" },
+        deleted_at: null,
+      },
+    });
+
+    // Filter and update policies that should be lapsed
+    let updatedCount = 0;
+    const policiestoUpdate = [];
+
+    for (const policy of policies) {
+      if (isLapsedPolicy(policy.premium_due_date)) {
+        policiestoUpdate.push(policy.id);
+      }
+    }
+
+    // Update all lapsed policies in batch
+    if (policiestoUpdate.length > 0) {
+      await prisma.policy.updateMany({
+        where: {
+          id: { in: policiestoUpdate },
+        },
+        data: {
+          status: "LAPSED",
+        },
+      });
+      updatedCount = policiestoUpdate.length;
+    }
+
+    res.status(200).json(
+      ApiResponse.success(
+        `Synced lapsed policies. Updated ${updatedCount} policies to LAPSED status`,
+        {
+          updated_count: updatedCount,
+          policy_ids: policiestoUpdate,
+        }
+      )
+    );
+  } catch (error) {
+    console.error("[Sync Lapsed Policies Error]:", error);
+    res.status(500).json(
+      ApiResponse.error("Failed to sync lapsed policies", null, 500)
+    );
+  }
+});
+
+/**
+ * PUT /api/policy/:policyId/mark-lapsed
+ * Manually mark a specific policy as LAPSED
+ */
+router.put("/policy/:policyId/mark-lapsed", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+    const { policyId } = req.params;
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Verify ownership
+    const policy = await prisma.policy.findUnique({
+      where: { id: policyId },
+    });
+
+    if (!policy) {
+      return res.status(404).json(
+        ApiResponse.error("Policy not found", null, 404)
+      );
+    }
+
+    if (policy.agent_id !== agentId && req.user?.role !== "admin") {
+      return res.status(403).json(
+        ApiResponse.error("Unauthorized to update this policy", null, 403)
+      );
+    }
+
+    // Update status to LAPSED
+    const updated = await prisma.policy.update({
+      where: { id: policyId },
+      data: { status: "LAPSED" },
+      include: { client: true },
+    });
+
+    res.status(200).json(
+      ApiResponse.success(
+        "Policy marked as LAPSED successfully",
+        updated
+      )
+    );
+  } catch (error) {
+    console.error("[Mark Policy Lapsed Error]:", error);
+    res.status(500).json(
+      ApiResponse.error("Failed to mark policy as lapsed", null, 500)
+    );
+  }
+});
+
+/**
+ * GET /api/policy/summary
+ * Get summary of policy statuses (ACTIVE, LAPSED, EXPIRED, PENDING)
+ */
+router.get("/policy/summary", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Get count by status
+    const statusCounts = await prisma.policy.groupBy({
+      by: ["status"],
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      _count: true,
+    });
+
+    // Get outdated policies count (premium not paid for 6+ months)
+    const allPolicies = await prisma.policy.findMany({
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      select: {
+        id: true,
+        premium_due_date: true,
+        status: true,
+      },
+    });
+
+    const outdatedCount = allPolicies.filter(
+      p => p.status !== "LAPSED" && isLapsedPolicy(p.premium_due_date)
+    ).length;
+
+    const summary = {
+      total_policies: allPolicies.length,
+      outdated_policies: outdatedCount,
+      by_status: statusCounts.reduce((acc, item) => {
+        acc[item.status] = item._count;
+        return acc;
+      }, {}),
+    };
+
+    res.status(200).json(
+      ApiResponse.success("Policy summary", summary)
+    );
+  } catch (error) {
+    console.error("[Policy Summary Error]:", error);
+    res.status(500).json(
+      ApiResponse.error("Failed to get policy summary", null, 500)
     );
   }
 });

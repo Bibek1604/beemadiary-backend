@@ -15,7 +15,7 @@ import { sanitizeRequest } from './middleware/validation';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { ResponseHandler } from './utils/errorResponse';
 import dashboardRoutes from './routes/dashboard.routes';
-import swaggerOptions from './docs/swagger';
+import swaggerOptions from './docs/swagger-complete';
 
 const app: Express = express();
 

@@ -9,6 +9,8 @@ const xssSanitizer = require("./middlewares/xss.middleware");
 const errorMiddleware = require("./middlewares/error.middleware");
 const { setupSwagger } = require("./docs/swagger");
 const routes = require("./routes");
+const calendarRoutes = require("./routes/calendar.routes");
+const targetsRoutes = require("./routes/targets.routes");
 const ApiResponse = require("./utils/apiResponse");
 
 const app = express();
@@ -55,6 +57,8 @@ setupSwagger(app);
 
 // 7. Mount Master Router
 app.use("/api", routes);
+app.use("/api/calendar", calendarRoutes);
+app.use("/api", targetsRoutes);
 
 // 8. 404 Route handler for unregistered routes
 app.use((req, res, next) => {

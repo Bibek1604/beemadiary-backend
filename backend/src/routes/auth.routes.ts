@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth.controller';
 import { verifyToken } from '../middleware/auth';
-import { asyncHandler } from '../middleware/asyncHandler';
 import { authLimiter } from '../middleware/security';
 import { validateBody } from '../middleware/validation';
 import { z } from 'zod';
@@ -48,7 +47,7 @@ router.post(
   authLimiter,
   csrfProtection,
   validateBody(registerSchema),
-  asyncHandler((req, res) => authController.register(req, res))
+  authController.register
 );
 
 /**
@@ -60,7 +59,7 @@ router.post(
   authLimiter,
   csrfProtection,
   validateBody(loginSchema),
-  asyncHandler((req, res) => authController.login(req, res))
+  authController.login
 );
 
 /**
@@ -71,7 +70,7 @@ router.post(
   '/logout',
   verifyToken,
   csrfProtection,
-  asyncHandler((req, res) => authController.logout(req, res))
+  authController.logout
 );
 
 /**
@@ -82,7 +81,7 @@ router.post(
   '/refresh',
   csrfProtection,
   validateBody(refreshTokenSchema),
-  asyncHandler((req, res) => authController.refreshToken(req, res))
+  authController.refreshToken
 );
 
 /**
@@ -92,7 +91,7 @@ router.post(
 router.get(
   '/sessions',
   verifyToken,
-  asyncHandler((req, res) => authController.getActiveSessions(req, res))
+  authController.getActiveSessions
 );
 
 /**
@@ -102,7 +101,7 @@ router.get(
 router.delete(
   '/sessions/:sessionId',
   verifyToken,
-  asyncHandler((req, res) => authController.terminateSession(req, res))
+  authController.terminateSession
 );
 
 /**
@@ -113,7 +112,7 @@ router.post(
   '/logout-all',
   verifyToken,
   csrfProtection,
-  asyncHandler((req, res) => authController.logoutAllDevices(req, res))
+  authController.logoutAllDevices
 );
 
 /**
@@ -125,7 +124,7 @@ router.post(
   verifyToken,
   csrfProtection,
   validateBody(changePasswordSchema),
-  asyncHandler((req, res) => authController.changePassword(req, res))
+  authController.changePassword
 );
 
 /**
@@ -137,7 +136,7 @@ router.post(
   authLimiter,
   csrfProtection,
   validateBody(forgotPasswordSchema),
-  asyncHandler((req, res) => authController.forgotPassword(req, res))
+  authController.forgotPassword
 );
 
 /**
@@ -149,7 +148,7 @@ router.post(
   verifyToken,
   csrfProtection,
   validateBody(verificationEmailSchema),
-  asyncHandler((req, res) => authController.sendVerificationEmail(req, res))
+  authController.sendVerificationEmail
 );
 
 /**
@@ -159,7 +158,7 @@ router.post(
 router.get(
   '/me',
   verifyToken,
-  asyncHandler((req, res) => authController.getCurrentUser(req, res))
+  authController.getCurrentUser
 );
 
 export default router;

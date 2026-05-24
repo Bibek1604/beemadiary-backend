@@ -9,7 +9,7 @@ export class TokenManager {
    */
   static generateAccessToken(payload: JWTPayload): string {
     return jwt.sign(payload, CONSTANTS.JWT_SECRET, {
-      expiresIn: CONSTANTS.ACCESS_TOKEN_EXPIRY || '15m',
+      expiresIn: (CONSTANTS.ACCESS_TOKEN_EXPIRY || '15m') as jwt.SignOptions['expiresIn'],
     });
   }
 
@@ -18,7 +18,7 @@ export class TokenManager {
    */
   static generateRefreshToken(payload: JWTPayload): string {
     return jwt.sign(payload, CONSTANTS.JWT_REFRESH_SECRET, {
-      expiresIn: CONSTANTS.REFRESH_TOKEN_EXPIRY || '7d',
+      expiresIn: (CONSTANTS.REFRESH_TOKEN_EXPIRY || '7d') as jwt.SignOptions['expiresIn'],
     });
   }
 
