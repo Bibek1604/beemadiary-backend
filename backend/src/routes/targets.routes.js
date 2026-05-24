@@ -132,7 +132,7 @@ router.get(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
       `
       SELECT id, agent_id, target_type, target_value, period_name, created_at, updated_at
       FROM agent_targets
-      WHERE agent_id = $1 AND deleted_at IS NULL
+      WHERE agent_id = $1::uuid AND deleted_at IS NULL
       ORDER BY created_at DESC
       `,
       agentId
@@ -185,7 +185,7 @@ router.post(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
       `
       SELECT id
       FROM agent_targets
-      WHERE agent_id = $1 AND target_type = $2 AND period_name = $3 AND deleted_at IS NULL
+      WHERE agent_id = $1::uuid AND target_type = $2 AND period_name = $3 AND deleted_at IS NULL
       LIMIT 1
       `,
       agentId,
@@ -202,7 +202,7 @@ router.post(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
     const inserted = await prisma.$queryRawUnsafe(
       `
       INSERT INTO agent_targets (agent_id, target_type, target_value, period_name)
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1::uuid, $2, $3, $4)
       RETURNING id, agent_id, target_type, target_value, period_name, created_at, updated_at
       `,
       agentId,
@@ -237,7 +237,7 @@ router.get(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, asy
       `
       SELECT id, agent_id, target_type, target_value, period_name, created_at, updated_at
       FROM agent_targets
-      WHERE id = $1 AND agent_id = $2 AND deleted_at IS NULL
+      WHERE id = $1::bigint AND agent_id = $2::uuid AND deleted_at IS NULL
       LIMIT 1
       `,
       targetId,
@@ -273,7 +273,7 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
       `
       SELECT id, agent_id, target_type, target_value, period_name, created_at, updated_at
       FROM agent_targets
-      WHERE id = $1 AND agent_id = $2 AND deleted_at IS NULL
+      WHERE id = $1::bigint AND agent_id = $2::uuid AND deleted_at IS NULL
       LIMIT 1
       `,
       targetId,
@@ -311,10 +311,10 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
       `
       SELECT id
       FROM agent_targets
-      WHERE agent_id = $1
+      WHERE agent_id = $1::uuid
         AND target_type = $2
         AND period_name = $3
-        AND id <> $4
+        AND id <> $4::bigint
         AND deleted_at IS NULL
       LIMIT 1
       `,
@@ -334,7 +334,7 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
       `
       UPDATE agent_targets
       SET target_type = $1, target_value = $2, period_name = $3, updated_at = NOW()
-      WHERE id = $4 AND agent_id = $5 AND deleted_at IS NULL
+      WHERE id = $4::bigint AND agent_id = $5::uuid AND deleted_at IS NULL
       RETURNING id, agent_id, target_type, target_value, period_name, created_at, updated_at
       `,
       targetType,
@@ -369,7 +369,7 @@ router.delete(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, 
       `
       UPDATE agent_targets
       SET deleted_at = NOW(), updated_at = NOW()
-      WHERE id = $1 AND agent_id = $2 AND deleted_at IS NULL
+      WHERE id = $1::bigint AND agent_id = $2::uuid AND deleted_at IS NULL
       `,
       targetId,
       agentId

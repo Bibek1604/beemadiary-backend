@@ -210,7 +210,7 @@ router.post(
   '/bulk',
   verifyToken,
   csrfProtection,
-  imageHandler.createUploadMiddleware('documents'),
+  imageHandler.createUploadMiddleware('documents').array('files', 10),
   asyncHandler(async (req: any, res: Response) => {
     if (!req.files || req.files.length === 0) {
       throw new NotFoundError('No files provided');

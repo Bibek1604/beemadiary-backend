@@ -49,8 +49,6 @@ const splitName = (fullName: string) => {
 
 const getCurrentAdminId = (req: any) => String(req.user?.id || '');
 
-const uploadDocument = imageHandler.createUploadMiddleware('documents');
-
 const serializeCompany = (company: Company) => ({
   id: company.id,
   name: company.name,
@@ -585,7 +583,7 @@ router.get(
 
 router.post(
   '/companies',
-  uploadDocument.single('image'),
+  imageHandler.createUploadMiddleware('documents').single('image'),
   asyncHandler(async (req: any, res: Response) => {
     const imageUrl = req.file ? (await imageHandler.uploadImage(req.file.path, 'companies')).url : normalizeText(req.body.image);
 
@@ -605,7 +603,7 @@ router.post(
 
 router.patch(
   '/companies/:id',
-  uploadDocument.single('image'),
+  imageHandler.createUploadMiddleware('documents').single('image'),
   asyncHandler(async (req: any, res: Response) => {
     const existing = await prisma.company.findUnique({ where: { id: req.params.id } });
     if (!existing || existing.deleted_at) {
@@ -687,7 +685,7 @@ router.get(
 
 router.post(
   '/agents',
-  uploadDocument.single('image'),
+  imageHandler.createUploadMiddleware('documents').single('image'),
   asyncHandler(async (req: any, res: Response) => {
     const imageUrl = req.file ? (await imageHandler.uploadImage(req.file.path, 'agents')).url : undefined;
 
@@ -715,7 +713,7 @@ router.post(
 
 router.patch(
   '/agents/:id',
-  uploadDocument.single('image'),
+  imageHandler.createUploadMiddleware('documents').single('image'),
   asyncHandler(async (req: any, res: Response) => {
     const existing = await prisma.agent.findUnique({ where: { id: req.params.id }, include: { _count: { select: { clients: true } } } });
     if (!existing || existing.deleted_at) {
@@ -1192,7 +1190,7 @@ router.get(
 
 router.post(
   '/news',
-  uploadDocument.single('image'),
+  imageHandler.createUploadMiddleware('documents').single('image'),
   asyncHandler(async (req: any, res: Response) => {
     const imageUrl = req.file ? (await imageHandler.uploadImage(req.file.path, 'news')).url : req.body.image || null;
     const news = await prisma.notification.create({
@@ -1221,7 +1219,7 @@ router.post(
 
 router.patch(
   '/news/:id',
-  uploadDocument.single('image'),
+  imageHandler.createUploadMiddleware('documents').single('image'),
   asyncHandler(async (req: any, res: Response) => {
     const existing = await prisma.notification.findUnique({ where: { id: req.params.id } });
     if (!existing) {
@@ -1293,7 +1291,7 @@ router.get(
 
 router.post(
   '/resources',
-  uploadDocument.single('file'),
+  imageHandler.createUploadMiddleware('documents').single('file'),
   asyncHandler(async (req: any, res: Response) => {
     const fileUrl = req.file ? (await imageHandler.uploadImage(req.file.path, 'resources')).url : req.body.file || null;
     const resource = await prisma.notification.create({
@@ -1322,7 +1320,7 @@ router.post(
 
 router.patch(
   '/resources/:id',
-  uploadDocument.single('file'),
+  imageHandler.createUploadMiddleware('documents').single('file'),
   asyncHandler(async (req: any, res: Response) => {
     const existing = await prisma.notification.findUnique({ where: { id: req.params.id } });
     if (!existing) {
