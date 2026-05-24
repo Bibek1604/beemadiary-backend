@@ -472,6 +472,7 @@ router.get("/client/search", async (req, res) => {
     // Build search query - handle wildcard and normal searches
     let whereClause = {
       agent_id: agentId,
+      deleted_at: null,
     };
 
     // If search term is "*" (wildcard), get all clients
@@ -489,18 +490,48 @@ router.get("/client/search", async (req, res) => {
       where: whereClause,
       select: {
         id: true,
+        client_id: true,
         first_name: true,
         last_name: true,
         email: true,
         phone: true,
+        secondary_phone: true,
+        address: true,
+        profile_picture: true,
+        created_at: true,
+        updated_at: true,
         status: true,
-        client_id: true,
+        policies: {
+          where: { deleted_at: null },
+          orderBy: { created_at: "desc" },
+          take: 1,
+          select: {
+            plan_name: true,
+            policy_number: true,
+            premium_due_date: true,
+            status: true,
+          },
+        },
       },
       take: 50,
     });
 
+    const normalizedClients = clients.map((client) => {
+      const latestPolicy = Array.isArray(client.policies) ? client.policies[0] : null;
+      return {
+        ...client,
+        phone_number: client.phone,
+        secondary_contact: client.secondary_phone,
+        is_active: client.status === "ACTIVE",
+        plan_name: latestPolicy?.plan_name || null,
+        policy_number: latestPolicy?.policy_number || null,
+        premium_due_date_ad: latestPolicy?.premium_due_date || null,
+        policy_status: latestPolicy?.status || null,
+      };
+    });
+
     res.status(200).json(
-      ApiResponse.success("Clients found", clients)
+      ApiResponse.success("Clients found", normalizedClients)
     );
   } catch (error) {
     console.error("[Client Search Error]:", error);
@@ -555,6 +586,12 @@ router.get("/client/:clientId", async (req, res) => {
     });
 
     if (!client) {
+      return res.status(404).json(
+        ApiResponse.error("Client not found", null, 404)
+      );
+    }
+
+    if (client.deleted_at) {
       return res.status(404).json(
         ApiResponse.error("Client not found", null, 404)
       );
@@ -649,7 +686,16 @@ router.get("/client/:clientId", async (req, res) => {
  *       500:
  *         description: Failed to update client
  */
-router.put("/client/:clientId", async (req, res) => {
+router.put(
+  "/client/:clientId",
+  upload.fields([
+    { name: "profile_picture", maxCount: 1 },
+    { name: "image", maxCount: 1 },
+    { name: "document", maxCount: 1 },
+    { name: "doc_1", maxCount: 1 },
+    { name: "doc_2", maxCount: 1 },
+  ]),
+  async (req, res) => {
   try {
     const agentId = req.user?.id;
     const { clientId } = req.params;
@@ -663,9 +709,16 @@ router.put("/client/:clientId", async (req, res) => {
     // Verify ownership
     const client = await prisma.client.findUnique({
       where: { id: clientId },
+      include: { policies: true },
     });
 
     if (!client) {
+      return res.status(404).json(
+        ApiResponse.error("Client not found", null, 404)
+      );
+    }
+
+    if (client.deleted_at) {
       return res.status(404).json(
         ApiResponse.error("Client not found", null, 404)
       );
@@ -677,38 +730,156 @@ router.put("/client/:clientId", async (req, res) => {
       );
     }
 
-    // Build update data - only non-empty values
+    const body = req.body || {};
     const updateData = {};
-    const allowedFields = [
-      "first_name", "last_name", "email", "phone", "secondary_phone",
-      "address", "dob", "age", "gender", "nominee_name",
-      "relation_with_nominee", "profession", "member_group", "reason_for_insurance"
-    ];
+    const policyUpdateData = {};
 
-    allowedFields.forEach(field => {
-      if (req.body[field] !== undefined && req.body[field] !== null && req.body[field] !== "") {
-        updateData[field] = req.body[field];
+    const fullName = firstValue(body.full_name, body.fullName, body.name);
+    if (fullName) {
+      const { firstName, lastName } = splitFullName(fullName);
+      if (firstName) updateData.first_name = firstName;
+      if (lastName) updateData.last_name = lastName;
+    }
+
+    const firstName = firstValue(body.first_name, body.firstName);
+    const lastName = firstValue(body.last_name, body.lastName);
+    const email = firstValue(body.email);
+    const phone = firstValue(body.phone, body.phone_number, body.contact_number, body.contactNumber);
+    const secondaryPhone = firstValue(body.secondary_phone, body.secondary_contact, body.secondaryPhone);
+    const address = firstValue(body.address);
+    const profession = firstValue(body.profession);
+    const memberGroup = firstValue(body.member_group, body.memberGroup, body.member);
+    const nomineeName = firstValue(body.nominee_name, body.nomineeName, body.nominee);
+    const nomineeRelation = firstValue(body.relation_with_nominee, body.nominee_relation, body.relationWithNominee, body.relation);
+    const reasonForInsurance = firstValue(body.reason_for_insurance, body.reasonForInsurance, body.why_bought, body.whyBought);
+    const gender = firstValue(body.gender);
+    const dob = firstValue(body.dob, body.date_of_birth, body.dateOfBirth);
+    const age = firstValue(body.age);
+
+    if (firstName) updateData.first_name = firstName;
+    if (lastName) updateData.last_name = lastName;
+    if (email) updateData.email = email;
+    if (phone) updateData.phone = phone;
+    if (secondaryPhone) updateData.secondary_phone = secondaryPhone;
+    if (address) updateData.address = address;
+    if (profession) updateData.profession = profession;
+    if (memberGroup) updateData.member_group = memberGroup;
+    if (nomineeName) updateData.nominee_name = nomineeName;
+    if (nomineeRelation) updateData.relation_with_nominee = nomineeRelation;
+    if (reasonForInsurance) updateData.reason_for_insurance = reasonForInsurance;
+    if (gender) updateData.gender = gender.toUpperCase();
+
+    if (dob) {
+      const parsedDob = toDateOrNull(dob);
+      if (parsedDob) updateData.dob = parsedDob;
+    }
+
+    if (age) {
+      const parsedAge = parseInt(age, 10);
+      if (!Number.isNaN(parsedAge) && parsedAge >= 0) {
+        updateData.age = parsedAge;
       }
-    });
+    }
 
-    if (Object.keys(updateData).length === 0) {
+    const files = req.files || {};
+    const profilePictureFile = files.profile_picture?.[0] || files.image?.[0] || null;
+    if (profilePictureFile) {
+      const profileUpload = await uploadFileToCloud(
+        profilePictureFile,
+        `lic-insurance/client-enrollment/${client.id}/profile-picture`,
+        `${client.id}-profile-picture`
+      );
+      updateData.profile_picture = profileUpload.url;
+      updateData.profile_picture_public_id = profileUpload.public_id;
+    }
+
+    const planName = firstValue(body.plan_name, body.planName);
+    const planNo = firstValue(body.plan_no, body.planNo);
+    const policyNumber = firstValue(body.policy_number, body.policyNumber);
+    const policyTerm = firstValue(body.policy_term, body.policyTerm, body.premium_term);
+    const sumAssured = firstValue(body.sum_assured, body.sumAssured);
+    const abPwb = firstValue(body.ab_pwb, body.abPwb);
+    const premiumAmount = firstValue(body.premium_amount, body.premiumAmount);
+    const discountScheme = firstValue(body.discount_scheme, body.discountScheme);
+    const docAd = firstValue(body.doc_ad, body.doc, body.docAd);
+    const maturityDate = firstValue(body.maturity_date, body.maturityTime, body.maturity_time);
+    const premiumDueDate = firstValue(body.premium_due_date, body.premium_due_date_ad, body.paymentDueDate, body.payment_due_date);
+    const bankName = firstValue(body.bank_name, body.bankName);
+    const bankAccount = firstValue(body.bank_account, body.bank_account_details, body.bankAccountDetails);
+    const branch = firstValue(body.branch, body.bank_branch, body.bankBranch);
+    const policyStatus = firstValue(body.policy_status, body.policyStatus, body.status);
+
+    if (planName) policyUpdateData.plan_name = planName;
+    if (planNo) policyUpdateData.plan_no = planNo;
+    if (policyNumber) policyUpdateData.policy_number = policyNumber;
+    if (policyTerm) policyUpdateData.policy_term = policyTerm;
+    if (abPwb) policyUpdateData.ab_pwb = abPwb;
+    if (discountScheme) policyUpdateData.discount_scheme = discountScheme;
+    if (docAd) policyUpdateData.doc = docAd;
+    if (premiumDueDate) policyUpdateData.premium_due_date = premiumDueDate;
+    if (bankName) policyUpdateData.bank_name = bankName;
+    if (bankAccount) policyUpdateData.bank_account = bankAccount;
+    if (branch) policyUpdateData.branch = branch;
+    if (policyStatus) policyUpdateData.status = normalizePolicyStatus(policyStatus);
+
+    if (sumAssured) {
+      const parsedSum = parseFloat(sumAssured);
+      if (!Number.isNaN(parsedSum) && parsedSum > 0) {
+        policyUpdateData.sum_assured = parsedSum;
+      }
+    }
+
+    if (premiumAmount) {
+      const parsedPremium = parseFloat(premiumAmount);
+      if (!Number.isNaN(parsedPremium) && parsedPremium > 0) {
+        policyUpdateData.premium_amount = parsedPremium;
+      }
+    }
+
+    if (maturityDate) {
+      const parsedMaturity = toDateOrNull(maturityDate);
+      if (parsedMaturity) {
+        policyUpdateData.maturity_time = parsedMaturity;
+      }
+    }
+
+    if (Object.keys(updateData).length === 0 && Object.keys(policyUpdateData).length === 0) {
       return res.status(400).json(
         ApiResponse.error("No valid fields to update", null, 400)
       );
     }
 
-    const updated = await prisma.client.update({
-      where: { id: clientId },
-      data: updateData,
-    });
+    const updatedClient = Object.keys(updateData).length > 0
+      ? await prisma.client.update({
+          where: { id: clientId },
+          data: updateData,
+        })
+      : client;
 
-    // Filter out null values
+    let updatedPolicy = null;
+    if (Object.keys(policyUpdateData).length > 0) {
+      const existingPolicy = client.policies?.[0] || await prisma.policy.findFirst({
+        where: { client_id: clientId, deleted_at: null },
+        orderBy: { created_at: "desc" },
+      });
+
+      if (existingPolicy) {
+        updatedPolicy = await prisma.policy.update({
+          where: { id: existingPolicy.id },
+          data: policyUpdateData,
+        });
+      }
+    }
+
     const responseData = Object.fromEntries(
-      Object.entries(updated).filter(([_, value]) => value !== null && value !== undefined && value !== "")
+      Object.entries(updatedClient).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
 
     res.status(200).json(
-      ApiResponse.success("Client updated successfully", responseData)
+      ApiResponse.success("Client updated successfully", {
+        data: responseData,
+        policy: updatedPolicy || undefined,
+      })
     );
   } catch (error) {
     console.error("[Update Client Error]:", error);
@@ -716,7 +887,8 @@ router.put("/client/:clientId", async (req, res) => {
       ApiResponse.error("Failed to update client", null, 500)
     );
   }
-});
+}
+);
 
 /**
  * @swagger
@@ -768,6 +940,10 @@ router.delete("/client/:clientId", async (req, res) => {
     });
 
     if (!client) {
+      return res.status(404).json(ApiResponse.error("Client not found", null, 404));
+    }
+
+    if (client.deleted_at) {
       return res.status(404).json(ApiResponse.error("Client not found", null, 404));
     }
 

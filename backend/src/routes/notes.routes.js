@@ -1,6 +1,6 @@
 const express = require('express');
-const prisma = require('../config/database');
-const { ApiResponse } = require('../utils/errorResponse');
+const { prisma } = require('../config/db');
+const ApiResponse = require('../utils/apiResponse');
 const { verifyToken } = require('../middleware/auth');
 
 const router = express.Router();
@@ -56,9 +56,9 @@ const validateNoteData = (data, isUpdate = false) => {
     }
   }
 
-  // Validate tag
-  if (data.tag && !NOTE_TAGS.includes(data.tag)) {
-    errors.push(`Tag must be one of: ${NOTE_TAGS.join(', ')}`);
+  // Validate category (formerly tag)
+  if (data.category && !NOTE_TAGS.includes(data.category)) {
+    errors.push(`Category must be one of: ${NOTE_TAGS.join(', ')}`);
   }
 
   return errors;
@@ -71,7 +71,7 @@ const formatNote = (dbNote) => ({
   id: String(dbNote.id),
   title: dbNote.title || '',
   content: dbNote.content,
-  tag: dbNote.tag || 'GENERAL',
+  category: dbNote.category || dbNote.tag || 'GENERAL',
   created_at: dbNote.created_at.toISOString(),
   updated_at: dbNote.updated_at.toISOString(),
 });
@@ -85,7 +85,7 @@ const formatNote = (dbNote) => ({
 router.get('/personal-notes', verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
-    const { page = 1, limit = NOTES_PAGE_SIZE, tag, search } = req.query;
+    const { page = 1, limit = NOTES_PAGE_SIZE, tag, category, search } = req.query;
 
     if (!agentId) {
       return res.status(401).json(
@@ -99,9 +99,9 @@ router.get('/personal-notes', verifyToken, async (req, res) => {
       deleted_at: null,
     };
 
-    // Filter by tag if provided
-    if (tag && NOTE_TAGS.includes(tag)) {
-      where.tag = tag;
+    // Filter by category (or legacy tag) if provided
+    if ((category && NOTE_TAGS.includes(category)) || (tag && NOTE_TAGS.includes(tag))) {
+      where.category = category || tag;
     }
 
     // Search in title and content if provided
@@ -113,10 +113,10 @@ router.get('/personal-notes', verifyToken, async (req, res) => {
     }
 
     // Get total count
-    const total = await prisma.note.count({ where });
+    const total = await prisma.personalNote.count({ where });
 
     // Get paginated notes - ordered by creation date (newest first)
-    const notes = await prisma.note.findMany({
+    const notes = await prisma.personalNote.findMany({
       where,
       orderBy: { created_at: 'desc' },
       skip: (parseInt(page) - 1) * parseInt(limit),
@@ -156,7 +156,7 @@ router.get('/personal-notes', verifyToken, async (req, res) => {
 router.post('/personal-notes', verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
-    const { title, content, tag = 'GENERAL' } = req.body;
+    const { title, content, category = 'GENERAL' } = req.body;
 
     if (!agentId) {
       return res.status(401).json(
@@ -165,7 +165,7 @@ router.post('/personal-notes', verifyToken, async (req, res) => {
     }
 
     // Validate input
-    const errors = validateNoteData({ title, content, tag });
+    const errors = validateNoteData({ title, content, category });
     if (errors.length > 0) {
       return res.status(400).json(
         ApiResponse.error('Validation failed', errors, 400)
@@ -176,11 +176,11 @@ router.post('/personal-notes', verifyToken, async (req, res) => {
     const noteTitle = title && title.trim() ? title.trim() : generateTitle(content);
 
     // Create note
-    const note = await prisma.note.create({
+    const note = await prisma.personalNote.create({
       data: {
         title: noteTitle,
         content: content.trim(),
-        tag: tag || 'GENERAL',
+        category: category || 'GENERAL',
         agent_id: agentId,
       },
     });
@@ -214,7 +214,7 @@ router.get('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Find note
-    const note = await prisma.note.findUnique({
+    const note = await prisma.personalNote.findUnique({
       where: { id: noteId },
     });
 
@@ -268,7 +268,7 @@ router.patch('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Find note
-    const note = await prisma.note.findUnique({
+    const note = await prisma.personalNote.findUnique({
       where: { id: noteId },
     });
 
@@ -313,7 +313,7 @@ router.patch('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Update note
-    const updatedNote = await prisma.note.update({
+    const updatedNote = await prisma.personalNote.update({
       where: { id: noteId },
       data: updateData,
     });
@@ -347,7 +347,7 @@ router.delete('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Find note
-    const note = await prisma.note.findUnique({
+    const note = await prisma.personalNote.findUnique({
       where: { id: noteId },
     });
 
@@ -365,7 +365,7 @@ router.delete('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Soft delete - set deleted_at timestamp
-    const deletedNote = await prisma.note.update({
+    const deletedNote = await prisma.personalNote.update({
       where: { id: noteId },
       data: { deleted_at: new Date() },
     });
@@ -401,7 +401,7 @@ router.delete('/personal-notes/:noteId/permanent', verifyToken, async (req, res)
     }
 
     // Find note
-    const note = await prisma.note.findUnique({
+    const note = await prisma.personalNote.findUnique({
       where: { id: noteId },
     });
 
@@ -412,7 +412,7 @@ router.delete('/personal-notes/:noteId/permanent', verifyToken, async (req, res)
     }
 
     // Hard delete
-    await prisma.note.delete({
+    await prisma.personalNote.delete({
       where: { id: noteId },
     });
 
@@ -442,25 +442,25 @@ router.get('/personal-notes/stats/summary', verifyToken, async (req, res) => {
     }
 
     // Get stats
-    const total = await prisma.note.count({
+    const total = await prisma.personalNote.count({
       where: { agent_id: agentId, deleted_at: null },
     });
 
-    const byTag = await prisma.note.groupBy({
-      by: ['tag'],
+    const byCategory = await prisma.personalNote.groupBy({
+      by: ['category'],
       where: { agent_id: agentId, deleted_at: null },
-      _count: { tag: true },
+      _count: { category: true },
     });
 
-    const tagCounts = NOTE_TAGS.reduce((acc, tag) => {
-      acc[tag] = byTag.find(t => t.tag === tag)?._count?.tag || 0;
+    const categoryCounts = NOTE_TAGS.reduce((acc, cat) => {
+      acc[cat] = byCategory.find(t => t.category === cat)?._count?.category || 0;
       return acc;
     }, {});
 
     const stats = {
       total,
-      by_tag: tagCounts,
-      created_today: await prisma.note.count({
+      by_category: categoryCounts,
+      created_today: await prisma.personalNote.count({
         where: {
           agent_id: agentId,
           deleted_at: null,

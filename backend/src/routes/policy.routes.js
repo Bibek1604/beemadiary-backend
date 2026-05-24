@@ -176,8 +176,8 @@ router.get("/policy/search", async (req, res) => {
     }
 
     if (!query?.trim()) {
-      return res.status(400).json(
-        ApiResponse.error("Search query is required", null, 400)
+      return res.status(200).json(
+        ApiResponse.success("Policies found", [])
       );
     }
 
@@ -187,6 +187,7 @@ router.get("/policy/search", async (req, res) => {
     const policies = await prisma.policy.findMany({
       where: {
         agent_id: agentId,
+        deleted_at: null,
         client: {
           OR: [
             { client_id: { contains: searchTerm, mode: "insensitive" } },
@@ -224,6 +225,7 @@ router.get("/policy/search", async (req, res) => {
           },
         },
       },
+      orderBy: { created_at: 'desc' },
       take: 50,
     });
 
@@ -232,8 +234,30 @@ router.get("/policy/search", async (req, res) => {
     );
   } catch (error) {
     console.error("[Policy Search Error]:", error);
+
+    // Handle Prisma errors with proper status codes
+    const errorCode = error?.code;
+    const errorMeta = error?.meta;
+
+    if (errorCode === 'P2025') {
+      return res.status(404).json(
+        ApiResponse.error("Policy not found", null, 404)
+      );
+    }
+
+    if (errorCode === 'P2003') {
+      return res.status(400).json(
+        ApiResponse.error("Invalid client reference", null, 400)
+      );
+    }
+
+    // Generic error handler
     res.status(500).json(
-      ApiResponse.error("Failed to search policies", null, 500)
+      ApiResponse.error(
+        "Failed to search policies",
+        error?.message || "Internal server error",
+        500
+      )
     );
   }
 });
