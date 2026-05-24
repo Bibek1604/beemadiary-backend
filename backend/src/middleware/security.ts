@@ -55,6 +55,7 @@ export const corsConfig = cors({
 
 /**
  * Rate limiting middleware
+ * Disabled in development for continuous testing
  */
 export const rateLimiter = rateLimit({
   windowMs: CONSTANTS.RATE_LIMIT_WINDOW,
@@ -63,7 +64,8 @@ export const rateLimiter = rateLimit({
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
   skip: (req) => {
-    // Skip rate limiting for health check
+    // Skip rate limiting for health check and development mode
+    if (process.env.NODE_ENV === 'development') return true;
     return req.path === '/health';
   },
 });

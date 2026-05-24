@@ -352,6 +352,8 @@ router.post(
       reason_for_insurance: reasonForInsurance || null,
       profile_picture: profilePictureUpload?.url || null,
       profile_picture_public_id: profilePictureUpload?.public_id || null,
+      // Store uploaded images in JSON field for persistence
+      images: imageUploads && imageUploads.length > 0 ? imageUploads : null,
     };
 
     const client = await prisma.client.create({ data: clientData });
@@ -380,19 +382,34 @@ router.post(
     if (maturityTime?.trim()) policyDataToCreate.maturity_time = maturityTime.trim();
     if (discountScheme?.trim()) policyDataToCreate.discount_scheme = discountScheme.trim();
     if (premiumDueDate?.trim()) policyDataToCreate.premium_due_date = premiumDueDate.trim();
+    if (premiumDuePaid?.trim()) policyDataToCreate.premium_paid = premiumDuePaid.trim().toUpperCase();
     if (bankName?.trim()) policyDataToCreate.bank_name = bankName.trim();
     if (bankAccountDetails?.trim()) policyDataToCreate.bank_account = bankAccountDetails.trim();
-    if (branch?.trim()) policyDataToCreate.bank_branch = branch.trim();
+    if (branch?.trim()) policyDataToCreate.branch = branch.trim();
     if (policyStatusInput?.trim()) {
       const status = policyStatusInput.trim().toUpperCase();
       if (["ACTIVE", "INACTIVE", "PENDING", "LAPSED", "EXPIRED"].includes(status)) {
-        policyDataToCreate.policy_status = status;
+        policyDataToCreate.status = status;
       } else {
-        policyDataToCreate.policy_status = "PENDING";
+        policyDataToCreate.status = "PENDING";
       }
     } else {
-      policyDataToCreate.policy_status = "PENDING";
+      policyDataToCreate.status = "PENDING";
     }
+
+    console.log('[CLIENT_ENROLL] Policy data being created:', {
+      plan_name: policyDataToCreate.plan_name,
+      plan_no: policyDataToCreate.plan_no,
+      policy_number: policyDataToCreate.policy_number,
+      sum_assured: policyDataToCreate.sum_assured,
+      premium_amount: policyDataToCreate.premium_amount,
+      bank_name: policyDataToCreate.bank_name,
+      bank_account: policyDataToCreate.bank_account,
+      branch: policyDataToCreate.branch,
+      premium_due_date: policyDataToCreate.premium_due_date,
+      premium_paid: policyDataToCreate.premium_paid,
+      status: policyDataToCreate.status,
+    });
 
     // Create policy only if policy details are provided
     if (Object.keys(policyDataToCreate).length > 3) { // More than just client_id, agent_id, policy_number, policy_status
@@ -580,9 +597,15 @@ router.get("/client/:clientId", async (req, res) => {
       );
     }
 
+    // Fetch client with related policies
     const client = await prisma.client.findUnique({
       where: { id: clientId },
-      include: { policies: true },
+      include: {
+        policies: {
+          where: { deleted_at: null },
+          orderBy: { created_at: "desc" },
+        },
+      },
     });
 
     if (!client) {
@@ -603,10 +626,11 @@ router.get("/client/:clientId", async (req, res) => {
       );
     }
 
-    // Filter out null values
-    const responseData = Object.fromEntries(
-      Object.entries(client).filter(([_, value]) => value !== null && value !== undefined && value !== "")
-    );
+    // Return client with policies intact (don't filter out null values for better data visibility)
+    const responseData = {
+      ...client,
+      policies: client.policies || [],
+    };
 
     res.status(200).json(
       ApiResponse.success("Client details retrieved", responseData)
@@ -804,6 +828,7 @@ router.put(
     const docAd = firstValue(body.doc_ad, body.doc, body.docAd);
     const maturityDate = firstValue(body.maturity_date, body.maturityTime, body.maturity_time);
     const premiumDueDate = firstValue(body.premium_due_date, body.premium_due_date_ad, body.paymentDueDate, body.payment_due_date);
+    const premiumDuePaid = firstValue(body.premium_due_paid, body.premiumDuePaid);
     const bankName = firstValue(body.bank_name, body.bankName);
     const bankAccount = firstValue(body.bank_account, body.bank_account_details, body.bankAccountDetails);
     const branch = firstValue(body.branch, body.bank_branch, body.bankBranch);
@@ -817,10 +842,21 @@ router.put(
     if (discountScheme) policyUpdateData.discount_scheme = discountScheme;
     if (docAd) policyUpdateData.doc = docAd;
     if (premiumDueDate) policyUpdateData.premium_due_date = premiumDueDate;
+    if (premiumDuePaid) policyUpdateData.premium_paid = premiumDuePaid.toUpperCase();
     if (bankName) policyUpdateData.bank_name = bankName;
     if (bankAccount) policyUpdateData.bank_account = bankAccount;
     if (branch) policyUpdateData.branch = branch;
     if (policyStatus) policyUpdateData.status = normalizePolicyStatus(policyStatus);
+
+    console.log('[CLIENT_UPDATE] Policy update data:', {
+      plan_name: policyUpdateData.plan_name,
+      bank_name: policyUpdateData.bank_name,
+      bank_account: policyUpdateData.bank_account,
+      branch: policyUpdateData.branch,
+      premium_due_date: policyUpdateData.premium_due_date,
+      premium_paid: policyUpdateData.premium_paid,
+      status: policyUpdateData.status,
+    });
 
     if (sumAssured) {
       const parsedSum = parseFloat(sumAssured);
