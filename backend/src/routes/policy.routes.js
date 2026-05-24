@@ -161,6 +161,19 @@ router.post("/policy/create", async (req, res) => {
 });
 
 /**
+ * Helper function to determine if a policy should be marked as lapsed
+ * based on premium due date being 6+ months overdue
+ */
+function isLapsedPolicy(premiumDueDate) {
+  if (!premiumDueDate) return false;
+  const dueDate = new Date(premiumDueDate);
+  if (isNaN(dueDate.getTime())) return false;
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  return dueDate <= sixMonthsAgo;
+}
+
+/**
  * GET /api/policy/search
  * Search policies by client name, id, or phone
  */
@@ -183,47 +196,30 @@ router.get("/policy/search", async (req, res) => {
 
     const searchTerm = query.trim().toLowerCase();
 
+    // Build search query - handle wildcard and normal searches
+    const whereClause = {
+      agent_id: agentId,
+      deleted_at: null,
+    };
+
+    // If search term is "*" (wildcard), get all policies
+    if (searchTerm !== "*") {
+      whereClause.client = {
+        OR: [
+          { client_id: { contains: searchTerm, mode: "insensitive" } },
+          { first_name: { contains: searchTerm, mode: "insensitive" } },
+          { last_name: { contains: searchTerm, mode: "insensitive" } },
+          { phone: { contains: searchTerm, mode: "insensitive" } },
+          { email: { contains: searchTerm, mode: "insensitive" } },
+        ],
+      };
+    }
+
     // Search by client name, client_id, or client phone
     const policies = await prisma.policy.findMany({
-      where: {
-        agent_id: agentId,
-        deleted_at: null,
-        client: {
-          OR: [
-            { client_id: { contains: searchTerm, mode: "insensitive" } },
-            { first_name: { contains: searchTerm, mode: "insensitive" } },
-            { last_name: { contains: searchTerm, mode: "insensitive" } },
-            { phone: { contains: searchTerm, mode: "insensitive" } },
-            { email: { contains: searchTerm, mode: "insensitive" } },
-          ],
-        },
-      },
+      where: whereClause,
       include: {
-        client: {
-          select: {
-            id: true,
-            client_id: true,
-            first_name: true,
-            last_name: true,
-            email: true,
-            phone: true,
-            secondary_phone: true,
-            address: true,
-            dob: true,
-            age: true,
-            gender: true,
-            profession: true,
-            member_group: true,
-            nominee_name: true,
-            relation_with_nominee: true,
-            reason_for_insurance: true,
-            image: true,
-            profile_picture: true,
-            status: true,
-            created_at: true,
-            updated_at: true,
-          },
-        },
+        client: true,
       },
       orderBy: { created_at: 'desc' },
       take: 50,

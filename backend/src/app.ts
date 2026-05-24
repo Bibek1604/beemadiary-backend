@@ -24,6 +24,7 @@ import notesRoutes from './routes/notes.routes';
 import calendarRoutes from './routes/calendar.routes';
 import targetsRoutes from './routes/targets.routes';
 import swaggerOptions from './docs/swagger-complete';
+import { globalErrorHandler } from './middleware/errors/global-error-handler';
 
 const app: Express = express();
 
@@ -81,11 +82,9 @@ app.use('/api/calendar', calendarRoutes);
 // 404 Handler - Must be after all routes
 app.use('*', notFoundHandler);
 
-// Legacy Error Handler (fallback)
-app.use(errorHandler);
-
-// Global Exception Handler - Must be last
-// Catches all unhandled errors and ensures proper formatting
-app.use(globalExceptionHandler);
+// Global Error Handler - MUST BE ABSOLUTELY LAST
+// This catches ALL errors (async/sync/unhandled) and returns human-friendly responses
+// NO 500 ERRORS will be exposed to users
+app.use(globalErrorHandler);
 
 export default app;
