@@ -174,6 +174,176 @@ function isLapsedPolicy(premiumDueDate) {
 }
 
 /**
+ * @swagger
+ * /api/policies:
+ *   get:
+ *     summary: Get ALL policies (no parameters)
+ *     description: Fetch all policies for the authenticated agent with client information and bank details. No query parameters needed!
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All policies retrieved with statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "All policies retrieved"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     stats:
+ *                       type: object
+ *                       properties:
+ *                         total_policies:
+ *                           type: integer
+ *                           example: 10
+ *                         active_policies:
+ *                           type: integer
+ *                           example: 8
+ *                         pending_policies:
+ *                           type: integer
+ *                           example: 1
+ *                         lapsed_policies:
+ *                           type: integer
+ *                           example: 1
+ *                         with_bank_details:
+ *                           type: integer
+ *                           example: 7
+ *                         without_bank_details:
+ *                           type: integer
+ *                           example: 3
+ *                         total_premium:
+ *                           type: number
+ *                           example: 250000
+ *                     policies:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                           policy_number:
+ *                             type: string
+ *                             example: "LIC-POL-2026-XYZ"
+ *                           plan_name:
+ *                             type: string
+ *                             example: "Endowment Plan"
+ *                           plan_no:
+ *                             type: string
+ *                           premium_amount:
+ *                             type: number
+ *                             example: 25000
+ *                           sum_assured:
+ *                             type: number
+ *                             example: 1000000
+ *                           bank_name:
+ *                             type: string
+ *                             description: Bank name (if set)
+ *                             example: "Nepal Bank Limited"
+ *                           bank_account:
+ *                             type: string
+ *                             description: Bank account number
+ *                             example: "1234567890"
+ *                           branch:
+ *                             type: string
+ *                             description: Bank branch
+ *                             example: "Kathmandu Main"
+ *                           status:
+ *                             type: string
+ *                             enum: [ACTIVE, PENDING, LAPSED, EXPIRED]
+ *                           client:
+ *                             type: object
+ *                             description: Client details for this policy
+ *                             properties:
+ *                               id:
+ *                                 type: string
+ *                                 description: Internal UUID
+ *                               client_id:
+ *                                 type: string
+ *                                 description: Sequential BM formatted client ID
+ *                                 example: "BM00001"
+ *                               first_name:
+ *                                 type: string
+ *                               last_name:
+ *                                 type: string
+ *                               email:
+ *                                 type: string
+ *                               phone:
+ *                                 type: string
+ *                           created_at:
+ *                             type: string
+ *                             format: date-time
+ *       401:
+ *         description: Unauthorized - Authentication required
+ *       500:
+ *         description: Failed to get policies
+ */
+router.get("/policies", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Fetch ALL policies with client details
+    const policies = await prisma.policy.findMany({
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      include: {
+        client: {
+          select: {
+            id: true,
+            client_id: true,
+            first_name: true,
+            last_name: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+      orderBy: { created_at: "desc" },
+      take: 1000,
+    });
+
+    // Count statistics
+    const stats = {
+      total_policies: policies.length,
+      active_policies: policies.filter((p) => p.status === "ACTIVE").length,
+      pending_policies: policies.filter((p) => p.status === "PENDING").length,
+      lapsed_policies: policies.filter((p) => p.status === "LAPSED").length,
+      with_bank_details: policies.filter((p) => p.bank_name && p.bank_account && p.branch).length,
+      without_bank_details: policies.filter((p) => !p.bank_name || !p.bank_account || !p.branch).length,
+      total_premium: policies.reduce((sum, p) => sum + (parseFloat(p.premium_amount) || 0), 0),
+    };
+
+    res.status(200).json(
+      ApiResponse.success("All policies retrieved", {
+        stats,
+        policies: policies,
+      })
+    );
+  } catch (error) {
+    console.error("[Get All Policies Error]:", error);
+    res.status(500).json(
+      ApiResponse.error("Failed to get all policies", null, 500)
+    );
+  }
+});
+
+/**
  * GET /api/policy/search
  * Search policies by client name, id, or phone
  */

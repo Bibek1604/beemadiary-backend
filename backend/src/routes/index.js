@@ -18,6 +18,7 @@ const notesRoutes = require("./notes.routes");
 const targetsRoutes = require("./targets.routes");
 const analyticsRoutes = require("./analytics.routes");
 const dashboardRoutes = require("./dashboard.routes");
+const diagnosticRoutes = require("./diagnostic.routes");
 const bcrypt = require("bcryptjs");
 const { prisma } = require("../config/db");
 
@@ -108,6 +109,7 @@ router.use("/", notesRoutes);
 router.use("/", targetsRoutes);
 router.use("/", analyticsRoutes);
 router.use("/", dashboardRoutes);
+router.use("/", diagnosticRoutes);
 
 module.exports = router;
 

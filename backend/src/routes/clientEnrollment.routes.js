@@ -103,17 +103,305 @@ router.use(authMiddleware);
 
 /**
  * @swagger
+ * /api/clients:
+ *   get:
+ *     summary: Get ALL clients (no parameters)
+ *     description: Fetch all clients for the authenticated agent with their policies. No query parameters needed!
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All clients retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "All clients retrieved"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     stats:
+ *                       type: object
+ *                       properties:
+ *                         total_clients:
+ *                           type: integer
+ *                           example: 5
+ *                         clients_with_policies:
+ *                           type: integer
+ *                           example: 3
+ *                         clients_without_policies:
+ *                           type: integer
+ *                           example: 2
+ *                         total_policies:
+ *                           type: integer
+ *                           example: 3
+ *                     clients:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             description: Internal UUID
+ *                             example: "51911abe-4965-4526-a7ac-9dec2602e7b1"
+ *                           client_id:
+ *                             type: string
+ *                             description: Random numeric BM formatted client ID (BM-{12 digits}) - USE THIS FOR DISPLAY
+ *                             example: "BM-987654321012"
+ *                           first_name:
+ *                             type: string
+ *                           last_name:
+ *                             type: string
+ *                           email:
+ *                             type: string
+ *                           phone:
+ *                             type: string
+ *                           status:
+ *                             type: string
+ *                           policies:
+ *                             type: array
+ *       401:
+ *         description: Unauthorized - Authentication required
+ *       500:
+ *         description: Failed to get clients
+ */
+router.get("/clients", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Fetch ALL clients with their policies
+    const clients = await prisma.client.findMany({
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      include: {
+        policies: {
+          where: { deleted_at: null },
+          orderBy: { created_at: "desc" },
+        },
+      },
+      orderBy: { created_at: "desc" },
+      take: 1000, // Get up to 1000 clients
+    });
+
+    // Count statistics
+    const stats = {
+      total_clients: clients.length,
+      clients_with_policies: clients.filter((c) => c.policies?.length > 0).length,
+      clients_without_policies: clients.filter((c) => !c.policies || c.policies.length === 0).length,
+      total_policies: clients.reduce((sum, c) => sum + (c.policies?.length || 0), 0),
+    };
+
+    res.status(200).json(
+      ApiResponse.success("All clients retrieved", {
+        stats,
+        clients: clients,
+      })
+    );
+  } catch (error) {
+    console.error("[Get All Clients Error]:", error);
+    res.status(500).json(
+      ApiResponse.error("Failed to get all clients", null, 500)
+    );
+  }
+});
+
+/**
+ * @swagger
+ * /api/clients/all/detailed:
+ *   get:
+ *     summary: Get ALL clients with COMPLETE details
+ *     description: Fetch all clients with complete information including all policy details and bank information. Includes client_id (LIC format).
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: All clients with detailed information retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     total_count:
+ *                       type: integer
+ *                       example: 5
+ *                     clients:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           id:
+ *                             type: string
+ *                             description: Internal UUID
+ *                           client_id:
+ *                             type: string
+ *                             description: "Random numeric BM formatted ID (e.g., BM-987654321012) - USE FOR DISPLAY"
+ *                             example: "BM-987654321012"
+ *                           full_name:
+ *                             type: string
+ *                           first_name:
+ *                             type: string
+ *                           last_name:
+ *                             type: string
+ *                           email:
+ *                             type: string
+ *                           phone:
+ *                             type: string
+ *                           address:
+ *                             type: string
+ *                           dob:
+ *                             type: string
+ *                             format: date
+ *                           gender:
+ *                             type: string
+ *                           nominee_name:
+ *                             type: string
+ *                           policies_count:
+ *                             type: integer
+ *                           policies:
+ *                             type: array
+ *                             items:
+ *                               type: object
+ *                               properties:
+ *                                 id:
+ *                                   type: string
+ *                                 policy_number:
+ *                                   type: string
+ *                                 plan_name:
+ *                                   type: string
+ *                                 premium_amount:
+ *                                   type: number
+ *                                 sum_assured:
+ *                                   type: number
+ *                                 bank_name:
+ *                                   type: string
+ *                                 bank_account:
+ *                                   type: string
+ *                                 branch:
+ *                                   type: string
+ *                                 status:
+ *                                   type: string
+ *       401:
+ *         description: Unauthorized - Authentication required
+ *       500:
+ *         description: Failed to get clients
+ */
+router.get("/clients/all/detailed", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    const clients = await prisma.client.findMany({
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      include: {
+        policies: {
+          where: { deleted_at: null },
+          orderBy: { created_at: "desc" },
+        },
+      },
+      orderBy: { created_at: "desc" },
+      take: 1000,
+    });
+
+    // Format response with all details
+    const detailedClients = clients.map((client) => ({
+      id: client.id,
+      client_id: client.client_id,
+      full_name: `${client.first_name} ${client.last_name}`,
+      first_name: client.first_name,
+      last_name: client.last_name,
+      email: client.email,
+      phone: client.phone,
+      secondary_phone: client.secondary_phone,
+      address: client.address,
+      dob: client.dob,
+      age: client.age,
+      gender: client.gender,
+      profession: client.profession,
+      member_group: client.member_group,
+      nominee_name: client.nominee_name,
+      relation_with_nominee: client.relation_with_nominee,
+      reason_for_insurance: client.reason_for_insurance,
+      profile_picture: client.profile_picture,
+      status: client.status,
+      policies_count: client.policies?.length || 0,
+      policies: client.policies?.map((p) => ({
+        id: p.id,
+        policy_number: p.policy_number,
+        plan_name: p.plan_name,
+        plan_no: p.plan_no,
+        premium_amount: p.premium_amount,
+        sum_assured: p.sum_assured,
+        bank_name: p.bank_name,
+        bank_account: p.bank_account,
+        branch: p.branch,
+        premium_due_date: p.premium_due_date,
+        doc: p.doc,
+        maturity_time: p.maturity_time,
+        status: p.status,
+        created_at: p.created_at,
+      })) || [],
+      created_at: client.created_at,
+      updated_at: client.updated_at,
+    }));
+
+    res.status(200).json(
+      ApiResponse.success("All clients with detailed information retrieved", {
+        total_count: detailedClients.length,
+        clients: detailedClients,
+      })
+    );
+  } catch (error) {
+    console.error("[Get All Clients Detailed Error]:", error);
+    res.status(500).json(
+      ApiResponse.error("Failed to get all clients", null, 500)
+    );
+  }
+});
+
+/**
+ * @swagger
  * /api/client/enroll:
  *   post:
- *     summary: Enroll client with policy
- *     description: Create a client record and linked policy with optional profile picture and document images.
+ *     summary: Enroll client with complete policy and bank details
+ *     description: Create a client record with full personal info, policy details, and bank account information.
  *     tags: [Client Enrollment]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
- *         multipart/form-data:
+ *         application/json:
  *           schema:
  *             type: object
  *             required:
@@ -123,61 +411,171 @@ router.use(authMiddleware);
  *               - address
  *               - plan_name
  *               - plan_no
- *               - policy_term
- *               - policy_number
- *               - sum_assured
  *               - premium_amount
  *             properties:
  *               full_name:
  *                 type: string
- *                 example: Ram Kumar
+ *                 description: Client full name (First Last)
+ *                 example: "Ram Kumar Singh"
+ *               first_name:
+ *                 type: string
+ *                 description: First name (alternative to full_name)
+ *                 example: "Ram"
+ *               last_name:
+ *                 type: string
+ *                 description: Last name (alternative to full_name)
+ *                 example: "Kumar"
  *               email:
  *                 type: string
  *                 format: email
- *                 example: ram@example.com
+ *                 description: Client email address (must be unique)
+ *                 example: "ram.kumar@example.com"
  *               phone:
  *                 type: string
- *                 example: 9841000000
+ *                 pattern: "^[0-9]{10}$"
+ *                 description: Primary phone number - exactly 10 numeric digits only (must be unique)
+ *                 example: "9841234567"
+ *               secondary_phone:
+ *                 type: string
+ *                 pattern: "^[0-9]{10}$"
+ *                 description: Secondary phone number - exactly 10 numeric digits only (optional)
+ *                 example: "9841234568"
  *               address:
  *                 type: string
- *                 example: Kathmandu, Nepal
+ *                 description: Residential address
+ *                 example: "Kathmandu, Nepal"
+ *               dob:
+ *                 type: string
+ *                 format: date
+ *                 description: Date of birth
+ *                 example: "1990-05-15"
+ *               age:
+ *                 type: integer
+ *                 description: Age in years
+ *                 example: 35
+ *               gender:
+ *                 type: string
+ *                 enum: [male, female, other]
+ *                 example: "male"
+ *               profession:
+ *                 type: string
+ *                 description: Professional occupation
+ *                 example: "Engineer"
+ *               member_group:
+ *                 type: string
+ *                 description: Member group or category
+ *                 example: "Corporate"
+ *               nominee_name:
+ *                 type: string
+ *                 description: Name of insurance nominee
+ *                 example: "Sita Singh"
+ *               relation_with_nominee:
+ *                 type: string
+ *                 description: Relationship with nominee
+ *                 example: "Wife"
+ *               reason_for_insurance:
+ *                 type: string
+ *                 description: Reason for buying insurance
+ *                 example: "Financial Security"
  *               plan_name:
  *                 type: string
- *                 example: Endowment Plan
+ *                 description: Insurance plan name
+ *                 example: "Endowment Plan"
  *               plan_no:
  *                 type: string
- *                 example: 14
+ *                 description: Plan number
+ *                 example: "14"
  *               policy_term:
  *                 type: string
- *                 example: 20 years
+ *                 description: Policy term duration
+ *                 example: "20 years"
  *               policy_number:
  *                 type: string
- *                 example: LIC-POL-2026-AB123
+ *                 description: Policy number (will be auto-generated if not provided)
+ *                 example: "POL-2026-001"
  *               sum_assured:
  *                 type: number
+ *                 description: Coverage amount
  *                 example: 1000000
  *               premium_amount:
  *                 type: number
+ *                 description: Annual premium amount
  *                 example: 25000
- *               personal_profile:
+ *               ab_pwb:
  *                 type: string
- *                 description: JSON string containing personal profile fields.
- *                 example: '{"gender":"male","nominee_name":"Sita"}'
- *               policy_details:
+ *                 description: Additional benefit or PWB code (optional)
+ *                 example: "AB-001"
+ *               discount_scheme:
  *                 type: string
- *                 description: JSON string containing policy fields.
- *                 example: '{"premium_due_date":"2026-12-31"}'
- *               profile_picture:
+ *                 description: Discount scheme code or percentage (optional)
+ *                 example: "5% Corporate Discount"
+ *               doc:
  *                 type: string
- *                 format: binary
- *               images:
- *                 type: array
- *                 items:
- *                   type: string
- *                   format: binary
+ *                 format: date
+ *                 description: Date of commencement (optional)
+ *                 example: "2026-05-25"
+ *               maturity_time:
+ *                 type: string
+ *                 format: date
+ *                 description: Policy maturity date (optional)
+ *                 example: "2046-05-25"
+ *               policy_status:
+ *                 type: string
+ *                 enum: [ACTIVE, PENDING, LAPSED, EXPIRED]
+ *                 description: Policy status
+ *                 example: "ACTIVE"
+ *               bank_name:
+ *                 type: string
+ *                 description: Bank name for premium payment
+ *                 example: "Nepal Bank Limited"
+ *               bank_account:
+ *                 type: string
+ *                 pattern: "^[0-9]+$"
+ *                 description: Bank account number - numeric digits only (no letters or special characters)
+ *                 example: "1234567890"
+ *               branch:
+ *                 type: string
+ *                 description: Bank branch name
+ *                 example: "Kathmandu Main Branch"
+ *               premium_due_date:
+ *                 type: string
+ *                 format: date
+ *                 description: Premium payment due date
+ *                 example: "2026-12-31"
+ *               premium_due_paid:
+ *                 type: string
+ *                 description: Premium payment status
+ *                 example: "PAID"
  *     responses:
  *       201:
  *         description: Client enrolled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Client enrolled successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     client_id:
+ *                       type: string
+ *                       example: "BM-987654321012"
+ *                       description: Auto-generated random numeric client ID
+ *                     client:
+ *                       type: object
+ *                       properties:
+ *                         id:
+ *                           type: string
+ *                           example: "51911abe-4965-4526-a7ac-9dec2602e7b1"
+ *                         client_id:
+ *                           type: string
+ *                           example: "BM-987654321012"
  *       400:
  *         description: Validation failed
  *       401:
@@ -246,8 +644,14 @@ router.post(
 
     const isValidEmail = (value) => /^[a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(value);
     const isValidPhone = (value) => {
-      const digits = value.replace(/\s/g, '').replace(/\D/g, '');
-      return digits.length >= 9 && digits.length <= 15;
+      // Only numeric, exactly 10 digits
+      const digits = String(value).replace(/\D/g, '');
+      return digits.length === 10;
+    };
+    const isValidBankAccount = (value) => {
+      // Only numeric digits, no letters or special characters
+      const digits = String(value).replace(/\D/g, '');
+      return digits === String(value).trim() && digits.length > 0 && digits.length <= 20;
     };
     const isValidNumber = (value) => {
       const num = parseFloat(String(value));
@@ -270,12 +674,12 @@ router.post(
     else if (email.length > 255) errors.push("Email must not exceed 255 characters");
 
     if (!phone) errors.push("Phone number is required");
-    else if (!isValidPhone(phone)) errors.push("Phone must contain 9-15 digits");
+    else if (!isValidPhone(phone)) errors.push("Phone must be exactly 10 numeric digits");
 
     if (!address) errors.push("Address is required");
     else if (address.length > 255) errors.push("Address must not exceed 255 characters");
 
-    if (secondaryPhone && !isValidPhone(secondaryPhone)) errors.push("Secondary phone must contain 9-15 digits");
+    if (secondaryPhone && !isValidPhone(secondaryPhone)) errors.push("Secondary phone must be exactly 10 numeric digits");
 
     if (dob) {
       const dobDate = new Date(dob);
@@ -307,11 +711,38 @@ router.post(
       if (Number.isNaN(docDate.getTime())) errors.push("DOC must be a valid date");
     }
 
+    if (bankAccountDetails && !isValidBankAccount(bankAccountDetails)) {
+      errors.push("Bank account must contain only numeric digits (no letters or special characters)");
+    }
+
     if (errors.length > 0) {
       return res.status(400).json(ApiResponse.error("Validation failed", errors, 400));
     }
 
-    const clientId = `LIC-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    // Generate random numeric BM ID (BM-{12 random digits})
+    let clientId;
+    let isUnique = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (!isUnique && attempts < maxAttempts) {
+      const randomNum = Math.floor(Math.random() * 999999999999);
+      clientId = `BM-${String(randomNum).padStart(12, '0')}`;
+
+      // Check if this ID already exists
+      const existing = await prisma.client.findUnique({
+        where: { client_id: clientId }
+      });
+
+      if (!existing) {
+        isUnique = true;
+      }
+      attempts++;
+    }
+
+    if (!isUnique) {
+      return res.status(500).json(ApiResponse.error("Failed to generate unique client ID", null, 500));
+    }
     const uploadFolderBase = `lic-insurance/client-enrollment/${clientId}`;
 
     const imageUploads = await Promise.all(
@@ -335,6 +766,7 @@ router.post(
     }
 
     const clientData = {
+      client_id: clientId,
       first_name: firstName,
       last_name: lastName,
       email,
@@ -445,7 +877,7 @@ router.post(
  * /api/client/search:
  *   get:
  *     summary: Search clients
- *     description: Search authenticated agent's clients by id, name, phone, or email.
+ *     description: Search authenticated agent's clients by id, name, phone, or email. Returns client_id (LIC format).
  *     tags: [Client Enrollment]
  *     security:
  *       - bearerAuth: []
@@ -455,15 +887,81 @@ router.post(
  *         required: true
  *         schema:
  *           type: string
- *         description: Search term
- *         example: ram
+ *         description: Search term (name, email, phone, or client_id). Use "*" to get all clients.
+ *         example: bibek
  *     responses:
  *       200:
- *         description: Clients found
+ *         description: Clients found with all details including client_id
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Clients found"
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                         description: Internal UUID of the client
+ *                         example: "51911abe-4965-4526-a7ac-9dec2602e7b1"
+ *                       client_id:
+ *                         type: string
+ *                         description: LIC formatted client ID (for display)
+ *                         example: "LIC-1716546834000-ABC12"
+ *                       first_name:
+ *                         type: string
+ *                         example: "Bibek"
+ *                       last_name:
+ *                         type: string
+ *                         example: "Sharma"
+ *                       email:
+ *                         type: string
+ *                         format: email
+ *                         example: "bibek@example.com"
+ *                       phone:
+ *                         type: string
+ *                         example: "9841000001"
+ *                       secondary_phone:
+ *                         type: string
+ *                         nullable: true
+ *                       address:
+ *                         type: string
+ *                         example: "Kathmandu, Nepal"
+ *                       profile_picture:
+ *                         type: string
+ *                         nullable: true
+ *                       status:
+ *                         type: string
+ *                         example: "ACTIVE"
+ *                       policies:
+ *                         type: array
+ *                         description: Latest policy (if any)
+ *                         items:
+ *                           type: object
+ *                           properties:
+ *                             plan_name:
+ *                               type: string
+ *                             policy_number:
+ *                               type: string
+ *                             premium_due_date:
+ *                               type: string
+ *                             status:
+ *                               type: string
+ *                       created_at:
+ *                         type: string
+ *                         format: date-time
  *       400:
  *         description: Search query is required
  *       401:
- *         description: Unauthorized
+ *         description: Unauthorized - Authentication token required
  *       500:
  *         description: Failed to search clients
  */

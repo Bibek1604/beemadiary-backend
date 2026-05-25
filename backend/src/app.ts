@@ -23,6 +23,8 @@ import adminRoutes from './routes/admin.routes';
 import notesRoutes from './routes/notes.routes';
 import calendarRoutes from './routes/calendar.routes';
 import targetsRoutes from './routes/targets.routes';
+import clientEnrollmentRoutes from './routes/clientEnrollment.routes';
+import policyRoutes from './routes/policy.routes';
 import swaggerOptions from './docs/swagger-complete';
 import { globalErrorHandler } from './middleware/errors/global-error-handler';
 
@@ -78,6 +80,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api', notesRoutes);
 app.use('/api', targetsRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api', clientEnrollmentRoutes);
+app.use('/api', policyRoutes);
 
 // 404 Handler - Must be after all routes
 app.use('*', notFoundHandler);
