@@ -1,8 +1,7 @@
 import { Response, NextFunction } from 'express';
-import { AuthenticatedRequest } from '../types';
+import { AuthenticatedRequest, UserRole } from '../types';
 import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
-import { UserRole } from '@prisma/client';
 
 /**
  * Check if user has required role

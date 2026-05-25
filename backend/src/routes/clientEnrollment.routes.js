@@ -3,8 +3,13 @@ const router = express.Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
 const multer = require("multer");
-const { prisma } = require("../config/db");
-const { uploadToCloudinary } = require("../utils/cloudinaryHelper");
+const { prisma, Prisma } = require("../config/db");
+const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryHelper");
+const {
+  shapeEnrollmentPayload,
+  shapeClientRecord,
+  shapeEnrollmentResponse,
+} = require("../models/clientEnrollment.model");
 
 // Configure Multer for image uploads
 const storage = multer.memoryStorage();
@@ -39,6 +44,45 @@ const parseMaybeJson = (value, fallback = {}) => {
   }
 };
 
+const collectIndexedArrayValues = (body, fieldNames, fallback = []) => {
+  const names = Array.isArray(fieldNames) ? fieldNames : [fieldNames];
+
+  for (const fieldName of names) {
+    const directValue = body?.[fieldName];
+
+    if (Array.isArray(directValue)) {
+      return directValue.map((value) => String(value).trim()).filter(Boolean);
+    }
+
+    if (typeof directValue === "string") {
+      const parsed = parseMaybeJson(directValue, null);
+      if (Array.isArray(parsed)) {
+        return parsed.map((value) => String(value).trim()).filter(Boolean);
+      }
+
+      if (directValue.trim()) {
+        return [directValue.trim()];
+      }
+    }
+
+    const indexedValues = Object.entries(body || {})
+      .filter(([key]) => key === fieldName || key.startsWith(`${fieldName}[`))
+      .sort((left, right) => {
+        const leftMatch = left[0].match(/\[(\d+)\]/);
+        const rightMatch = right[0].match(/\[(\d+)\]/);
+        return Number(leftMatch?.[1] || 0) - Number(rightMatch?.[1] || 0);
+      })
+      .map(([, value]) => String(value).trim())
+      .filter(Boolean);
+
+    if (indexedValues.length > 0) {
+      return indexedValues;
+    }
+  }
+
+  return fallback;
+};
+
 const firstValue = (...values) => {
   for (const value of values) {
     if (value === undefined || value === null) continue;
@@ -52,6 +96,29 @@ const toDateOrNull = (value) => {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+};
+const normalizePremiumPaidValue = (premiumPaidInput, premiumAmountInput) => {
+  if (premiumPaidInput === undefined || premiumPaidInput === null) return undefined;
+
+  const text = String(premiumPaidInput).trim();
+  if (!text) return undefined;
+
+  const numericValue = Number(text);
+  if (Number.isFinite(numericValue)) {
+    return numericValue;
+  }
+
+  const upper = text.toUpperCase();
+  if (["PAID", "YES", "TRUE", "DONE", "COMPLETED"].includes(upper)) {
+    const premiumAmount = Number(premiumAmountInput);
+    return Number.isFinite(premiumAmount) ? premiumAmount : 0;
+  }
+
+  if (["DUE", "UNPAID", "NO", "FALSE", "PENDING"].includes(upper)) {
+    return 0;
+  }
+
+  return undefined;
 };
 
 const uploadFileToCloud = async (file, folder, publicId) => {
@@ -334,46 +401,7 @@ router.get("/clients/all/detailed", async (req, res) => {
     });
 
     // Format response with all details
-    const detailedClients = clients.map((client) => ({
-      id: client.id,
-      client_id: client.client_id,
-      full_name: `${client.first_name} ${client.last_name}`,
-      first_name: client.first_name,
-      last_name: client.last_name,
-      email: client.email,
-      phone: client.phone,
-      secondary_phone: client.secondary_phone,
-      address: client.address,
-      dob: client.dob,
-      age: client.age,
-      gender: client.gender,
-      profession: client.profession,
-      member_group: client.member_group,
-      nominee_name: client.nominee_name,
-      relation_with_nominee: client.relation_with_nominee,
-      reason_for_insurance: client.reason_for_insurance,
-      profile_picture: client.profile_picture,
-      status: client.status,
-      policies_count: client.policies?.length || 0,
-      policies: client.policies?.map((p) => ({
-        id: p.id,
-        policy_number: p.policy_number,
-        plan_name: p.plan_name,
-        plan_no: p.plan_no,
-        premium_amount: p.premium_amount,
-        sum_assured: p.sum_assured,
-        bank_name: p.bank_name,
-        bank_account: p.bank_account,
-        branch: p.branch,
-        premium_due_date: p.premium_due_date,
-        doc: p.doc,
-        maturity_time: p.maturity_time,
-        status: p.status,
-        created_at: p.created_at,
-      })) || [],
-      created_at: client.created_at,
-      updated_at: client.updated_at,
-    }));
+    const detailedClients = clients.map((client) => shapeClientRecord(client));
 
     res.status(200).json(
       ApiResponse.success("All clients with detailed information retrieved", {
@@ -584,10 +612,11 @@ router.get("/clients/all/detailed", async (req, res) => {
  *         description: Failed to enroll client
  */
 router.post(
-  "/client/enroll",
+  ["/client/enroll", "/enrollment/create"],
   upload.fields([
     { name: "profile_picture", maxCount: 1 },
     { name: "images", maxCount: 10 },
+    { name: "supporting_images", maxCount: 10 },
   ]),
   async (req, res) => {
   try {
@@ -621,26 +650,41 @@ router.post(
     const reasonForInsurance = firstValue(payload.reason_for_insurance, payload.reasonForInsurance, payload.why_bought, payload.whyBought);
 
     const planName = firstValue(payload.plan_name, payload.planName);
-    const planNo = firstValue(payload.plan_no, payload.planNo);
+    const planNo = firstValue(payload.plan_number, payload.plan_no, payload.planNo);
     const policyTerm = firstValue(payload.policy_term, payload.policyTerm);
     const policyNumberInput = firstValue(payload.policy_number, payload.policyNumber);
     const sumAssured = firstValue(payload.sum_assured, payload.sumAssured);
     const abPwb = firstValue(payload.ab_pwb, payload.abPwb);
-    const doc = firstValue(payload.doc);
+    const doc = firstValue(payload.date_of_commencement, payload.doc);
     const maturityTime = firstValue(payload.maturity_time, payload.maturityTime);
     const premiumAmount = firstValue(payload.premium_amount, payload.premiumAmount);
     const discountScheme = firstValue(payload.discount_scheme, payload.discountScheme);
     const premiumDueDate = firstValue(payload.premium_due_date, payload.payment_due_date, payload.paymentDueDate);
     const bankName = firstValue(payload.bank_name, payload.bankName);
     const bankAccountDetails = firstValue(payload.bank_account_details, payload.bankAccountDetails, payload.bank_account);
-    const branch = firstValue(payload.branch);
-    const premiumDuePaid = firstValue(payload.premium_due_paid, payload.premiumDuePaid);
+    const branch = firstValue(payload.bank_branch, payload.branch);
+    const premiumDuePaid = firstValue(payload.premium_status, payload.premium_due_paid, payload.premiumDuePaid);
     const policyStatusInput = firstValue(payload.policy_status, payload.policyStatus, payload.status);
 
-    const imageLabels = parseMaybeJson(req.body.image_labels || req.body.imageLabels, []);
+    const imageLabels = collectIndexedArrayValues(req.body, ["supporting_images_labels", "image_labels", "imageLabels"], []);
     const profileFiles = req.files || {};
     const profilePictureFile = profileFiles.profile_picture?.[0] || null;
-    const imageFiles = profileFiles.images || [];
+    const imageFiles = profileFiles.supporting_images || profileFiles.images || [];
+    const requestView = shapeEnrollmentPayload(payload, {
+      profile_picture: profilePictureFile
+        ? {
+            originalname: profilePictureFile.originalname,
+            mimetype: profilePictureFile.mimetype,
+            size: profilePictureFile.size,
+          }
+        : null,
+      images: imageFiles.map((file, index) => ({
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+        label: imageLabels[index] || file.originalname,
+      })),
+    });
 
     const isValidEmail = (value) => /^[a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(value);
     const isValidPhone = (value) => {
@@ -785,39 +829,42 @@ router.post(
       profile_picture: profilePictureUpload?.url || null,
       profile_picture_public_id: profilePictureUpload?.public_id || null,
       // Store uploaded images in JSON field for persistence
-      images: imageUploads && imageUploads.length > 0 ? imageUploads : null,
+      images: imageUploads,
     };
 
-    const client = await prisma.client.create({ data: clientData });
-
-    // ── Create Policy if policy data is provided ──
-    let policyRecord = null;
     const policyDataToCreate = {
-      client_id: client.id,
+      client_id: null, // Will be set in transaction
       agent_id: agentId,
+      company_id: companyId,
     };
 
-    // Add policy fields if provided
     if (planName?.trim()) policyDataToCreate.plan_name = planName.trim();
     if (planNo?.trim()) policyDataToCreate.plan_no = planNo.trim();
     if (policyNumberInput?.trim()) policyDataToCreate.policy_number = policyNumberInput.trim();
     else policyDataToCreate.policy_number = `LIC-POL-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-
     if (policyTerm?.trim()) policyDataToCreate.policy_term = policyTerm.trim();
-    if (sumAssured && isValidNumber(sumAssured)) policyDataToCreate.sum_assured = parseFloat(sumAssured);
-    if (premiumAmount && isValidNumber(premiumAmount)) policyDataToCreate.premium_amount = parseFloat(premiumAmount);
+    if (sumAssured && isValidNumber(sumAssured)) policyDataToCreate.sum_assured = new Prisma.Decimal(sumAssured);
+    if (premiumAmount && isValidNumber(premiumAmount)) policyDataToCreate.premium_amount = new Prisma.Decimal(premiumAmount);
     if (abPwb?.trim()) policyDataToCreate.ab_pwb = abPwb.trim();
     if (doc) {
       const docDate = new Date(doc);
       if (!Number.isNaN(docDate.getTime())) policyDataToCreate.doc = doc;
     }
-    if (maturityTime?.trim()) policyDataToCreate.maturity_time = maturityTime.trim();
+    if (maturityTime?.trim()) {
+      const parsedMaturity = toDateOrNull(maturityTime);
+      if (parsedMaturity) policyDataToCreate.maturity_time = parsedMaturity;
+    }
     if (discountScheme?.trim()) policyDataToCreate.discount_scheme = discountScheme.trim();
     if (premiumDueDate?.trim()) policyDataToCreate.premium_due_date = premiumDueDate.trim();
-    if (premiumDuePaid?.trim()) policyDataToCreate.premium_paid = premiumDuePaid.trim().toUpperCase();
     if (bankName?.trim()) policyDataToCreate.bank_name = bankName.trim();
     if (bankAccountDetails?.trim()) policyDataToCreate.bank_account = bankAccountDetails.trim();
     if (branch?.trim()) policyDataToCreate.branch = branch.trim();
+    if (premiumDuePaid?.trim()) {
+      const normalizedStatus = String(premiumDuePaid).trim().toUpperCase();
+      if (["DUE", "PAID", "PARTIAL"].includes(normalizedStatus)) {
+        policyDataToCreate.premium_status = normalizedStatus;
+      }
+    }
     if (policyStatusInput?.trim()) {
       const status = policyStatusInput.trim().toUpperCase();
       if (["ACTIVE", "INACTIVE", "PENDING", "LAPSED", "EXPIRED"].includes(status)) {
@@ -829,7 +876,22 @@ router.post(
       policyDataToCreate.status = "PENDING";
     }
 
-    console.log('[CLIENT_ENROLL] Policy data being created:', {
+    const result = await prisma.$transaction(async (tx) => {
+      const client = await tx.client.create({ data: clientData });
+
+      let policyRecord = null;
+      if (Object.keys(policyDataToCreate).length > 3) {
+        const policyDataWithClientId = {
+          ...policyDataToCreate,
+          client_id: client.id,
+        };
+        policyRecord = await tx.policy.create({ data: policyDataWithClientId });
+      }
+
+      return { client, policy: policyRecord };
+    });
+
+    console.log('[CLIENT_ENROLL] Policy data created:', {
       plan_name: policyDataToCreate.plan_name,
       plan_no: policyDataToCreate.plan_no,
       policy_number: policyDataToCreate.policy_number,
@@ -839,32 +901,23 @@ router.post(
       bank_account: policyDataToCreate.bank_account,
       branch: policyDataToCreate.branch,
       premium_due_date: policyDataToCreate.premium_due_date,
-      premium_paid: policyDataToCreate.premium_paid,
+      premium_status: policyDataToCreate.premium_status,
       status: policyDataToCreate.status,
     });
 
-    // Create policy only if policy details are provided
-    if (Object.keys(policyDataToCreate).length > 3) { // More than just client_id, agent_id, policy_number, policy_status
-      try {
-        policyRecord = await prisma.policy.create({ data: policyDataToCreate });
-      } catch (policyError) {
-        console.warn("[Client Enroll] Policy creation failed (non-blocking):", policyError.message);
-      }
-    }
-
-    const cleanRecord = (record) =>
-      Object.fromEntries(Object.entries(record).filter(([_, value]) => value !== null && value !== undefined && value !== ""));
-
     return res.status(201).json(
-      ApiResponse.success("Client enrolled successfully", {
-        data: cleanRecord(client),
-        client_id: client.id,
-        policy: policyRecord ? cleanRecord(policyRecord) : null,
-        uploads: {
-          profile_picture: profilePictureUpload,
-          images: imageUploads,
-        },
-      })
+      ApiResponse.success(
+        "Client enrolled successfully",
+        shapeEnrollmentResponse({
+          client: result.client,
+          policy: result.policy,
+          uploads: {
+            profile_picture: profilePictureUpload,
+            images: imageUploads,
+          },
+          received_payload: requestView,
+        })
+      )
     );
   } catch (error) {
     console.error("[Client Enroll Error]:", error);
@@ -976,6 +1029,21 @@ router.get("/client/search", async (req, res) => {
       );
     }
 
+    const requestView = shapeEnrollmentPayload(req.body || {}, {
+      profile_picture: req.files?.profile_picture?.[0]
+        ? {
+            originalname: req.files.profile_picture[0].originalname,
+            mimetype: req.files.profile_picture[0].mimetype,
+            size: req.files.profile_picture[0].size,
+          }
+        : null,
+      images: req.files?.images?.map((file) => ({
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+      })) || [],
+    });
+
     if (!query?.trim()) {
       return res.status(400).json(
         ApiResponse.error("Search query is required", null, 400)
@@ -1021,10 +1089,25 @@ router.get("/client/search", async (req, res) => {
           orderBy: { created_at: "desc" },
           take: 1,
           select: {
+            id: true,
+            plan_no: true,
             plan_name: true,
             policy_number: true,
+            policy_term: true,
+            sum_assured: true,
+            ab_pwb: true,
+            doc: true,
+            maturity_time: true,
+            premium_amount: true,
+            discount_scheme: true,
             premium_due_date: true,
+            premium_paid: true,
+            bank_name: true,
+            bank_account: true,
+            branch: true,
             status: true,
+            created_at: true,
+            updated_at: true,
           },
         },
       },
@@ -1038,6 +1121,29 @@ router.get("/client/search", async (req, res) => {
         phone_number: client.phone,
         secondary_contact: client.secondary_phone,
         is_active: client.status === "ACTIVE",
+        latest_policy: latestPolicy
+          ? {
+              id: latestPolicy.id,
+              plan_no: latestPolicy.plan_no,
+              plan_name: latestPolicy.plan_name,
+              policy_number: latestPolicy.policy_number,
+              policy_term: latestPolicy.policy_term,
+              sum_assured: latestPolicy.sum_assured,
+              ab_pwb: latestPolicy.ab_pwb,
+              doc: latestPolicy.doc,
+              maturity_time: latestPolicy.maturity_time,
+              premium_amount: latestPolicy.premium_amount,
+              discount_scheme: latestPolicy.discount_scheme,
+              premium_due_date: latestPolicy.premium_due_date,
+              premium_paid: latestPolicy.premium_paid,
+              bank_name: latestPolicy.bank_name,
+              bank_account: latestPolicy.bank_account,
+              branch: latestPolicy.branch,
+              status: latestPolicy.status,
+              created_at: latestPolicy.created_at,
+              updated_at: latestPolicy.updated_at,
+            }
+          : null,
         plan_name: latestPolicy?.plan_name || null,
         policy_number: latestPolicy?.policy_number || null,
         premium_due_date_ad: latestPolicy?.premium_due_date || null,
@@ -1084,7 +1190,7 @@ router.get("/client/search", async (req, res) => {
  *       500:
  *         description: Failed to get client details
  */
-router.get("/client/:clientId", async (req, res) => {
+router.get(["/client/:clientId", "/enrollment/:clientId"], async (req, res) => {
   try {
     const agentId = req.user?.id;
     const { clientId } = req.params;
@@ -1096,8 +1202,13 @@ router.get("/client/:clientId", async (req, res) => {
     }
 
     // Fetch client with related policies
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
+    const client = await prisma.client.findFirst({
+      where: {
+        OR: [
+          { id: clientId },
+          { client_id: clientId },
+        ],
+      },
       include: {
         policies: {
           where: { deleted_at: null },
@@ -1124,11 +1235,8 @@ router.get("/client/:clientId", async (req, res) => {
       );
     }
 
-    // Return client with policies intact (don't filter out null values for better data visibility)
-    const responseData = {
-      ...client,
-      policies: client.policies || [],
-    };
+    // Return client with policies intact and in the same backend/frontend field shape.
+    const responseData = shapeClientRecord(client);
 
     res.status(200).json(
       ApiResponse.success("Client details retrieved", responseData)
@@ -1209,13 +1317,15 @@ router.get("/client/:clientId", async (req, res) => {
  *         description: Failed to update client
  */
 router.put(
-  "/client/:clientId",
+  ["/client/:clientId", "/enrollment/:clientId/update"],
   upload.fields([
     { name: "profile_picture", maxCount: 1 },
     { name: "image", maxCount: 1 },
     { name: "document", maxCount: 1 },
     { name: "doc_1", maxCount: 1 },
     { name: "doc_2", maxCount: 1 },
+    { name: "supporting_images", maxCount: 10 },
+    { name: "images", maxCount: 10 },
   ]),
   async (req, res) => {
   try {
@@ -1227,6 +1337,13 @@ router.put(
         ApiResponse.error("Agent ID not found", null, 401)
       );
     }
+
+    const agent = await prisma.agent.findUnique({
+      where: { id: agentId },
+      select: { id: true, company_id: true },
+    });
+    const fallbackCompany = await prisma.company.findFirst({ select: { id: true } });
+    const companyId = agent?.company_id || fallbackCompany?.id || null;
 
     // Verify ownership
     const client = await prisma.client.findUnique({
@@ -1303,8 +1420,33 @@ router.put(
       }
     }
 
+    const imageLabels = collectIndexedArrayValues(body, ["supporting_images_labels", "image_labels", "imageLabels"], []);
     const files = req.files || {};
     const profilePictureFile = files.profile_picture?.[0] || files.image?.[0] || null;
+    const imageFiles = files.supporting_images || files.images || [];
+
+    const requestView = shapeEnrollmentPayload(body, {
+      profile_picture: profilePictureFile
+        ? {
+            originalname: profilePictureFile.originalname,
+            mimetype: profilePictureFile.mimetype,
+            size: profilePictureFile.size,
+          }
+        : null,
+      images: imageFiles.map((file, index) => ({
+        originalname: file.originalname,
+        mimetype: file.mimetype,
+        size: file.size,
+        label: imageLabels[index] || file.originalname,
+      })),
+    });
+
+    if (profilePictureFile && client.profile_picture_public_id) {
+      await deleteFromCloudinary(client.profile_picture_public_id).catch((error) => {
+        console.warn("[CLIENT_UPDATE] Failed to delete old profile picture:", error?.message || error);
+      });
+    }
+
     if (profilePictureFile) {
       const profileUpload = await uploadFileToCloud(
         profilePictureFile,
@@ -1313,6 +1455,31 @@ router.put(
       );
       updateData.profile_picture = profileUpload.url;
       updateData.profile_picture_public_id = profileUpload.public_id;
+    }
+
+    if (imageFiles.length > 0) {
+      const uploadFolderBase = `lic-insurance/client-enrollment/${client.id}`;
+      const existingImages = Array.isArray(client.images) ? client.images : [];
+
+      await Promise.all(
+        existingImages
+          .filter((image) => image && typeof image === "object" && image.public_id)
+          .map((image) =>
+            deleteFromCloudinary(image.public_id).catch((error) => {
+              console.warn("[CLIENT_UPDATE] Failed to delete old supporting image:", error?.message || error);
+            })
+          )
+      );
+
+      const newImageUploads = await Promise.all(
+        imageFiles.map((file, index) =>
+          uploadFileToCloud(file, `${uploadFolderBase}/images`, `${client.id}-image-${Date.now()}-${index + 1}`).then((result) => ({
+            label: imageLabels[index] || file.originalname,
+            ...result,
+          }))
+        )
+      );
+      updateData.images = newImageUploads;
     }
 
     const planName = firstValue(body.plan_name, body.planName);
@@ -1340,11 +1507,17 @@ router.put(
     if (discountScheme) policyUpdateData.discount_scheme = discountScheme;
     if (docAd) policyUpdateData.doc = docAd;
     if (premiumDueDate) policyUpdateData.premium_due_date = premiumDueDate;
-    if (premiumDuePaid) policyUpdateData.premium_paid = premiumDuePaid.toUpperCase();
+    if (premiumDuePaid) {
+      const normalizedStatus = String(premiumDuePaid).trim().toUpperCase();
+      if (["DUE", "PAID", "PARTIAL"].includes(normalizedStatus)) {
+        policyUpdateData.premium_status = normalizedStatus;
+      }
+    }
     if (bankName) policyUpdateData.bank_name = bankName;
     if (bankAccount) policyUpdateData.bank_account = bankAccount;
     if (branch) policyUpdateData.branch = branch;
     if (policyStatus) policyUpdateData.status = normalizePolicyStatus(policyStatus);
+    if (companyId) policyUpdateData.company_id = companyId;
 
     console.log('[CLIENT_UPDATE] Policy update data:', {
       plan_name: policyUpdateData.plan_name,
@@ -1354,19 +1527,20 @@ router.put(
       premium_due_date: policyUpdateData.premium_due_date,
       premium_paid: policyUpdateData.premium_paid,
       status: policyUpdateData.status,
+      company_id: policyUpdateData.company_id,
     });
 
     if (sumAssured) {
       const parsedSum = parseFloat(sumAssured);
       if (!Number.isNaN(parsedSum) && parsedSum > 0) {
-        policyUpdateData.sum_assured = parsedSum;
+        policyUpdateData.sum_assured = new Prisma.Decimal(parsedSum);
       }
     }
 
     if (premiumAmount) {
       const parsedPremium = parseFloat(premiumAmount);
       if (!Number.isNaN(parsedPremium) && parsedPremium > 0) {
-        policyUpdateData.premium_amount = parsedPremium;
+        policyUpdateData.premium_amount = new Prisma.Decimal(parsedPremium);
       }
     }
 
@@ -1411,8 +1585,9 @@ router.put(
 
     res.status(200).json(
       ApiResponse.success("Client updated successfully", {
-        data: responseData,
-        policy: updatedPolicy || undefined,
+        data: shapeClientRecord(updatedClient),
+        policy: updatedPolicy ? shapeEnrollmentResponse({ client: updatedClient, policy: updatedPolicy }).policy : undefined,
+        received_payload: requestView,
       })
     );
   } catch (error) {
@@ -1459,7 +1634,7 @@ router.put(
  *       500:
  *         description: Failed to delete client
  */
-router.delete("/client/:clientId", async (req, res) => {
+router.delete(["/client/:clientId", "/enrollment/:clientId", "/enrollment/:clientId/delete"], async (req, res) => {
   try {
     const agentId = req.user?.id;
     const { clientId } = req.params;

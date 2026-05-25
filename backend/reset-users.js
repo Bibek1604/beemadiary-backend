@@ -1,7 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
+const { prisma } = require('./src/config/db');
 const bcrypt = require('bcryptjs');
-
-const prisma = new PrismaClient();
 
 async function hashPassword(password) {
   return await bcrypt.hash(password, 10);
@@ -70,7 +68,9 @@ async function resetUsers() {
   } catch (error) {
     console.error('❌ Error:', error.message);
   } finally {
-    await prisma.$disconnect();
+    if (prisma.$disconnect) {
+      await prisma.$disconnect();
+    }
   }
 }
 

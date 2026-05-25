@@ -14,7 +14,7 @@ const errorMiddleware = (err, req, res, next) => {
   logger.error(`${req.method} ${req.originalUrl} failed:`, err);
 
   // Handle Prisma Database Errors
-  if (err.code && err.code.startsWith("P")) {
+  if (typeof err.code === "string" && err.code.startsWith("P")) {
     statusCode = 400;
     switch (err.code) {
       case "P2002": // Unique constraint violation
@@ -39,6 +39,20 @@ const errorMiddleware = (err, req, res, next) => {
         errors = [err.message || "An unexpected database error occurred"];
         break;
     }
+  }
+
+  // Handle MongoDB duplicate key / selection errors
+  if (err.code === 11000 || err.codeName === "DuplicateKey") {
+    statusCode = 409;
+    message = "Unique constraint violation";
+    const fields = err.keyPattern ? Object.keys(err.keyPattern) : [];
+    errors = fields.length > 0 ? fields.map((field) => `${field} must be unique`) : ["A record with this unique field value already exists"];
+  }
+
+  if (err.name === "MongoServerSelectionError" || err.name === "MongoNetworkError") {
+    statusCode = 503;
+    message = "Database service is unavailable";
+    errors = [err.message || "Unable to connect to the database"];
   }
 
   // Handle Joi validation errors (if we use Joi)

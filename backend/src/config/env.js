@@ -7,7 +7,12 @@ dotenv.config({ path: path.join(__dirname, "../../.env") });
 module.exports = {
   NODE_ENV: process.env.NODE_ENV || "development",
   PORT: parseInt(process.env.PORT || "3000", 10),
-  DATABASE_URL: process.env.DATABASE_URL,
+  MONGODB_URI: process.env.MONGODB_URI || "",
+  MONGODB_DATABASE: process.env.MONGODB_DATABASE || process.env.DB_NAME || "beemadiary",
+  MONGODB_HOST: process.env.MONGODB_HOST || "localhost",
+  MONGODB_PORT: process.env.MONGODB_PORT || "27017",
+  MONGODB_USERNAME: process.env.MONGODB_USERNAME || process.env.DB_USER || "",
+  MONGODB_PASSWORD: process.env.MONGODB_PASSWORD || process.env.DB_PASSWORD || "",
   JWT_SECRET: process.env.JWT_SECRET || "supersecretjwtkeyforbeemadiarybackend2026!",
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "24h",
   USE_CLOUDINARY: process.env.USE_CLOUDINARY === "True" || process.env.USE_CLOUDINARY === "true",

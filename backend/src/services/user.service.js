@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const { prisma } = require("../config/db");
 const { uploadImage, deleteImage } = require("../utils/cloudinary");
 const auditLogRepository = require("../repositories/audit.repository");
 

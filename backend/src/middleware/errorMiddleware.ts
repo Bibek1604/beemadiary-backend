@@ -132,74 +132,35 @@ export const errorHandler = (
     });
   }
 
-  // Handle Prisma-specific errors
-  if (err.constructor.name === 'PrismaClientKnownRequestError') {
-    const prismaError: any = err;
-
-    if (prismaError.code === 'P2025') {
-      // Record not found
-      return res.status(404).json({
-        success: false,
-        code: 'NOT_FOUND',
-        message: 'Resource not found',
-        timestamp: new Date().toISOString(),
-        requestId,
-      });
-    }
-
-    if (prismaError.code === 'P2002') {
-      // Unique constraint violation
-      return res.status(409).json({
-        success: false,
-        code: 'CONFLICT',
-        message: 'Resource with this value already exists',
-        details: {
-          field: prismaError.meta?.target,
-        },
-        timestamp: new Date().toISOString(),
-        requestId,
-      });
-    }
-
-    if (prismaError.code === 'P2003') {
-      // Foreign key constraint
-      return res.status(400).json({
-        success: false,
-        code: 'VALIDATION_ERROR',
-        message: 'Invalid reference to related resource',
-        details: {
-          relation: prismaError.meta?.relation_name,
-        },
-        timestamp: new Date().toISOString(),
-        requestId,
-      });
-    }
-
-    // Generic Prisma error
-    return res.status(500).json({
+  // Handle MongoDB-specific errors
+  if (err?.code === 11000 || err?.name === 'MongoServerError') {
+    return res.status(409).json({
       success: false,
-      code: 'DATABASE_ERROR',
-      message: 'Database operation failed',
+      code: 'CONFLICT',
+      message: 'Resource with this value already exists',
+      details: {
+        field: err?.keyPattern ? Object.keys(err.keyPattern) : undefined,
+      },
       timestamp: new Date().toISOString(),
       requestId,
     });
   }
 
-  if (err.constructor.name === 'PrismaClientValidationError') {
-    return res.status(400).json({
-      success: false,
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid request data',
-      timestamp: new Date().toISOString(),
-      requestId,
-    });
-  }
-
-  if (err.constructor.name === 'PrismaClientInitializationError') {
+  if (err?.name === 'MongoNetworkError' || err?.name === 'MongoServerSelectionError') {
     return res.status(503).json({
       success: false,
       code: 'SERVICE_UNAVAILABLE',
       message: 'Database service is unavailable',
+      timestamp: new Date().toISOString(),
+      requestId,
+    });
+  }
+
+  if (err?.name === 'MongoValidationError') {
+    return res.status(400).json({
+      success: false,
+      code: 'VALIDATION_ERROR',
+      message: 'Invalid request data',
       timestamp: new Date().toISOString(),
       requestId,
     });

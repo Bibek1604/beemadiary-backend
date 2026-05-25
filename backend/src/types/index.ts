@@ -1,5 +1,6 @@
-import { UserRole } from '@prisma/client';
 import type { Request } from 'express';
+
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'AGENT' | 'CLIENT';
 
 export interface JWTPayload {
   id: number;

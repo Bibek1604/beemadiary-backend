@@ -1,14 +1,4 @@
 import { Router, Response } from 'express';
-import {
-  Company,
-  Prisma,
-  UserType,
-  NotificationTargetType,
-  PolicyStatus,
-  Status,
-  TransactionStatus,
-  TransactionType,
-} from '@prisma/client';
 import prisma from '../config/database';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { verifyToken } from '../middleware/auth';
@@ -16,6 +6,20 @@ import { requireAdmin } from '../middleware/rbac';
 import { ResponseHandler } from '../utils/errorResponse';
 import imageHandler from '../utils/imageHandler';
 import { PasswordUtils } from '../utils/passwordUtils';
+
+type Company = any;
+type Status = 'ACTIVE' | 'INACTIVE';
+const Status = { ACTIVE: 'ACTIVE', INACTIVE: 'INACTIVE' } as const;
+type UserType = 'ADMIN' | 'AGENT' | 'CLIENT';
+const UserType = { ADMIN: 'ADMIN', AGENT: 'AGENT', CLIENT: 'CLIENT' } as const;
+type NotificationTargetType = 'SINGLE' | 'ALL';
+const NotificationTargetType = { SINGLE: 'SINGLE', ALL: 'ALL' } as const;
+type PolicyStatus = 'ACTIVE' | 'LAPSED' | 'EXPIRED' | 'PENDING';
+const PolicyStatus = { ACTIVE: 'ACTIVE', LAPSED: 'LAPSED', EXPIRED: 'EXPIRED', PENDING: 'PENDING' } as const;
+type TransactionStatus = 'PENDING' | 'SUCCESSFUL' | 'FAILED';
+const TransactionStatus = { PENDING: 'PENDING', SUCCESSFUL: 'SUCCESSFUL', FAILED: 'FAILED' } as const;
+type TransactionType = 'PREMIUM_PAYMENT' | 'CLAIM_PAYOUT' | 'COMMISSION';
+const TransactionType = { PREMIUM_PAYMENT: 'PREMIUM_PAYMENT', CLAIM_PAYOUT: 'CLAIM_PAYOUT', COMMISSION: 'COMMISSION' } as const;
 
 const router = Router();
 
@@ -812,8 +816,8 @@ router.post(
         policy_number: normalizeText(req.body.policy_number || `POL-${Date.now()}`),
         name: normalizeText(req.body.name),
         type: normalizeText(req.body.type || 'GENERAL'),
-        coverage_amount: new Prisma.Decimal(req.body.coverage_amount || 0),
-        premium_amount: new Prisma.Decimal(req.body.premium_amount || 0),
+        coverage_amount: Number(req.body.coverage_amount || 0),
+        premium_amount: Number(req.body.premium_amount || 0),
         status: (String(req.body.status || 'PENDING').toUpperCase() as PolicyStatus) || 'PENDING',
         start_date: req.body.start_date ? new Date(req.body.start_date) : new Date(),
         end_date: req.body.end_date ? new Date(req.body.end_date) : new Date(),
@@ -845,8 +849,8 @@ router.patch(
       data: {
         name: req.body.name ?? undefined,
         type: req.body.type ?? undefined,
-        coverage_amount: req.body.coverage_amount !== undefined ? new Prisma.Decimal(req.body.coverage_amount) : undefined,
-        premium_amount: req.body.premium_amount !== undefined ? new Prisma.Decimal(req.body.premium_amount) : undefined,
+        coverage_amount: req.body.coverage_amount !== undefined ? Number(req.body.coverage_amount) : undefined,
+        premium_amount: req.body.premium_amount !== undefined ? Number(req.body.premium_amount) : undefined,
         status: req.body.status ? (String(req.body.status).toUpperCase() as PolicyStatus) : undefined,
         start_date: req.body.start_date ? new Date(req.body.start_date) : undefined,
         end_date: req.body.end_date ? new Date(req.body.end_date) : undefined,
@@ -935,7 +939,7 @@ router.post(
     const transaction = await prisma.transaction.create({
       data: {
         policy_id: policy.id,
-        amount: new Prisma.Decimal(req.body.amount || 0),
+        amount: Number(req.body.amount || 0),
         type: (String(req.body.type || 'PREMIUM_PAYMENT').toUpperCase() as TransactionType) || 'PREMIUM_PAYMENT',
         payment_method: normalizeText(req.body.payment_method || 'MANUAL'),
         status: (String(req.body.status || 'PENDING').toUpperCase() as TransactionStatus) || 'PENDING',
@@ -962,7 +966,7 @@ router.patch(
     const updated = await prisma.transaction.update({
       where: { id: req.params.id },
       data: {
-        amount: req.body.amount !== undefined ? new Prisma.Decimal(req.body.amount) : undefined,
+        amount: req.body.amount !== undefined ? Number(req.body.amount) : undefined,
         type: req.body.type ? (String(req.body.type).toUpperCase() as TransactionType) : undefined,
         payment_method: req.body.payment_method ?? undefined,
         status: req.body.status ? (String(req.body.status).toUpperCase() as TransactionStatus) : undefined,

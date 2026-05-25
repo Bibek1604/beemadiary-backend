@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import app from './app';
-import prisma from './config/database';
+import { MongoConnectionManager } from './config/mongoClient';
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || 'localhost';
@@ -25,7 +25,7 @@ const gracefulShutdown = async () => {
     console.log('HTTP server closed');
   });
 
-  await prisma.$disconnect();
+  await MongoConnectionManager.getInstance().disconnect();
   console.log('Database disconnected');
 
   process.exit(0);

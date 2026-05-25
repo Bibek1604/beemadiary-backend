@@ -1,7 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
+const { prisma } = require('./src/config/db');
 const bcrypt = require('bcryptjs');
-
-const prisma = new PrismaClient();
 
 /**
  * Hash password using BCRYPT (same as auth service uses)
@@ -52,7 +50,9 @@ async function createAdmin() {
   } catch (error) {
     console.error('❌ Error:', error.message);
   } finally {
-    await prisma.$disconnect();
+    if (prisma.$disconnect) {
+      await prisma.$disconnect();
+    }
   }
 }
 

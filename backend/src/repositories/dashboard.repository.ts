@@ -1,6 +1,6 @@
 import prisma from '../config/database';
 import { DateUtils } from '../utils/dateUtils';
-import { Decimal } from '@prisma/client/runtime/library';
+type Decimal = number;
 
 export class DashboardRepository {
   /**

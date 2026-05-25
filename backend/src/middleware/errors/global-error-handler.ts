@@ -4,7 +4,6 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { Prisma } from '@prisma/client';
 import { logger } from '../../utils/logger';
 import {
   AppError,
@@ -92,101 +91,29 @@ function classifyError(error: any, requestId: string): AppError {
     return error;
   }
 
-  // Prisma errors
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    return handlePrismaError(error, requestId);
+  // MongoDB errors
+  if (error?.code === 11000 || error?.name === 'MongoServerError') {
+    return new ConflictError(
+      `A record with this ${Object.keys(error.keyPattern || {})[0] || 'field'} already exists. Please use a different value.`
+    );
   }
 
-  if (error instanceof Prisma.PrismaClientValidationError) {
+  if (error?.name === 'ValidationError' || error?.name === 'BSONError') {
     return new ValidationError('Invalid data provided. Please check your input.', [
       { field: 'unknown', message: error.message },
     ]);
   }
 
-  if (error instanceof Prisma.PrismaClientRustPanicError) {
+  if (error?.name === 'MongoNetworkError' || error?.name === 'MongoServerSelectionError') {
     return new DatabaseError('Database connection lost. Please try again.', error, 503);
   }
-
-  // Validation errors
-  if (error.name === 'ValidationError') {
-    return new ValidationError(
-      'Please check your input and try again',
-      error.details || [{ field: 'unknown', message: error.message }]
-    );
-  }
-
-  // JSON parsing errors
-  if (error instanceof SyntaxError && 'body' in error) {
-    return new ValidationError('Invalid JSON format. Please check your request body.', [
-      { field: 'body', message: 'Invalid JSON' },
-    ]);
-  }
-
-  // Mongoose duplicate key error
-  if (error.code === 11000) {
-    const field = Object.keys(error.keyPattern)[0];
-    return new ConflictError(
-      `A ${field} with this value already exists. Please use a different value.`
-    );
-  }
-
-  // Network errors
-  if (error.code === 'ECONNREFUSED') {
-    return new ExternalServiceError(
-      'Database',
-      'Connection failed. Please try again later.',
-      503
-    );
-  }
-
-  if (error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
-    return new ExternalServiceError(
-      'External Service',
-      'Unable to connect to external service. Please try again.',
-      503
-    );
-  }
-
-  if (error.name === 'AbortError') {
-    return new TimeoutError('Request', 'The request took too long. Please try again.');
-  }
-
-  // File system errors
-  if (error.code === 'ENOENT') {
-    return new NotFoundError('File');
-  }
-
-  if (error.code === 'EACCES') {
-    return new ServiceUnavailableError('Cannot access file. Please try again later.');
-  }
-
-  // Cast errors
-  if (error.name === 'CastError') {
-    return new ValidationError('Invalid value provided. Please check your input.');
-  }
-
-  // JWT/Auth errors
-  if (error.name === 'JsonWebTokenError') {
-    return new AuthenticationError('Your session is invalid. Please log in again.');
-  }
-
-  if (error.name === 'TokenExpiredError') {
-    return new AuthenticationError('Your session has expired. Please log in again.');
-  }
-
-  // Rate limiting
-  if (
-    error.name === 'TooManyRequestsError' ||
-    error.message?.includes('rate')
-  ) {
-    return new Error('RATE_LIMIT_EXCEEDED');
-  }
-
-  // Timeout
-  if (
-    error.message?.includes('timeout') ||
-    error.message?.includes('TIMEOUT')
-  ) {
+function handlePrismaError(_error: any, _requestId: string): AppError {
+  return new DatabaseError(
+    'Unable to process your request. Please try again later.',
+    _error,
+    503
+  );
+}
     return new TimeoutError('Request');
   }
 
@@ -226,50 +153,9 @@ function classifyError(error: any, requestId: string): AppError {
 }
 
 function handlePrismaError(
-  error: Prisma.PrismaClientKnownRequestError,
-  requestId: string
-): AppError {
-  const code = error.code;
-  const target = (error.meta?.target as string[]) || [];
-  const field = target[0] || 'field';
-
-  switch (code) {
-    case 'P2025':
-      return new NotFoundError(
-        'Record',
-        'The record you are looking for does not exist or has been deleted.'
-      );
-
-    case 'P2002':
-      return new ConflictError(
-        `A record with this ${field} already exists. Please use a different value.`
-      );
-
-    case 'P2003':
-      return new UnprocessableEntityError(
-        'Cannot complete this operation because it references data that does not exist.',
-        { [field]: 'Invalid reference' }
-      );
-
-    case 'P2014':
-      return new UnprocessableEntityError(
-        'Cannot delete this record because other records depend on it.'
-      );
-
-    case 'P2011':
-      return new ValidationError(`${field} is required. Please provide this information.`, [
-        { field, message: 'This field is required' },
-      ]);
-
-    case 'P2012':
-      return new DatabaseError(
-        'Database schema error. Please contact support.',
-        error,
-        500
-      );
-
-    case 'P2009':
-      return new DatabaseError(
+      function handlePrismaError(_error: any, _requestId: string): AppError {
+        return new DatabaseError('A database error occurred. Please try again later.', _error, 500);
+      }
         'Database authentication failed. Please try again later.',
         error,
         503

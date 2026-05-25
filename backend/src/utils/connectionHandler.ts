@@ -3,7 +3,7 @@
  * Manages connection pooling, health checks, and recovery
  */
 
-import { PrismaClient } from '@prisma/client';
+import mongoPrisma, { MongoConnectionManager } from '../config/mongoClient';
 import { ConnectionError, RetryHandler, ErrorLogger } from './errorHandler';
 
 export interface IConnectionConfig {
@@ -18,7 +18,6 @@ export interface IConnectionConfig {
  */
 export class ConnectionManager {
   private static instance: ConnectionManager;
-  private prisma: PrismaClient;
   private isConnected: boolean = false;
   private config: Required<IConnectionConfig>;
   private healthCheckInterval: NodeJS.Timeout | null = null;
@@ -31,9 +30,6 @@ export class ConnectionManager {
       healthCheckIntervalMs: config?.healthCheckIntervalMs || 60000,
     };
 
-    this.prisma = new PrismaClient({
-      errorFormat: 'colorless',
-    });
   }
 
   /**
@@ -75,17 +71,10 @@ export class ConnectionManager {
    * Test database connection
    */
   private async testConnection(): Promise<void> {
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      this.config.connectionTimeoutMs
-    );
-
     try {
-      await this.prisma.$queryRaw`SELECT 1`;
-      clearTimeout(timeout);
+      const db = await MongoConnectionManager.getInstance().connect();
+      await db.command({ ping: 1 });
     } catch (error) {
-      clearTimeout(timeout);
       throw error;
     }
   }
@@ -115,14 +104,14 @@ export class ConnectionManager {
   /**
    * Get Prisma client
    */
-  getPrisma(): PrismaClient {
+  getPrisma(): typeof mongoPrisma {
     if (!this.isConnected) {
       throw new ConnectionError(
         'Database connection is not active',
         false
       );
     }
-    return this.prisma;
+    return mongoPrisma;
   }
 
   /**
@@ -156,7 +145,7 @@ export class ConnectionManager {
     }
 
     try {
-      await this.prisma.$disconnect();
+      await MongoConnectionManager.getInstance().disconnect();
       this.isConnected = false;
       console.log('[ConnectionManager] Database connection closed');
     } catch (error) {
@@ -169,14 +158,14 @@ export class ConnectionManager {
    * Execute with connection check
    */
   async execute<T>(
-    operation: (prisma: PrismaClient) => Promise<T>
+    operation: (prisma: typeof mongoPrisma) => Promise<T>
   ): Promise<T> {
     if (!this.isConnected) {
       throw new ConnectionError('Database connection not available', true);
     }
 
     try {
-      return await operation(this.prisma);
+      return await operation(mongoPrisma);
     } catch (error) {
       this.isConnected = false;
       throw error;
@@ -206,6 +195,6 @@ export const connectionHealthMiddleware = (req: any, res: any, next: any) => {
 /**
  * Get shared Prisma instance
  */
-export const getPrisma = (): PrismaClient => {
+export const getPrisma = (): typeof mongoPrisma => {
   return ConnectionManager.getInstance().getPrisma();
 };

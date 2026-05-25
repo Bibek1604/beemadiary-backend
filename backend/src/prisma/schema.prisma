@@ -169,6 +169,7 @@ model Policy {
   bank_account_details String?
   branch          String?
   premium_due_paid String?
+  premium_status   String?
   policy_status   String?
   status          PolicyStatus @default(PENDING)
   start_date      DateTime

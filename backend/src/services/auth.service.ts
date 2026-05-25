@@ -1,78 +1,58 @@
-import { User } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import authRepository from '../repositories/auth.repository';
 import { PasswordUtils } from '../utils/passwordUtils';
 import { TokenManager } from '../middleware/tokenManager';
-import { AccountLockoutManager } from '../utils/accountLockout';
-import { AuditLogger } from '../utils/auditLogger';
-import { CONSTANTS } from '../config/constants';
+import type { UserRole } from '../types';
 
-/**
- * Authentication Service
- * Handles all business logic for authentication
- */
+type UserRecord = {
+  id: string;
+  email: string;
+  password_hash?: string;
+  password?: string;
+  first_name?: string;
+  last_name?: string;
+  role?: UserRole;
+  is_active?: boolean;
+};
+
+type SessionRecord = {
+  id: string;
+  created_at?: Date;
+  last_activity?: Date;
+  is_active?: boolean;
+  device_name?: string;
+  ip_address?: string;
+};
+
 export class AuthService {
-  private passwordUtils = PasswordUtils;
-  private tokenManager = TokenManager;
-  private accountLockout = AccountLockoutManager;
-  private auditLogger = AuditLogger;
-
-  /**
-   * Register a new user
-   */
   async register(
     email: string,
     password: string,
     firstName: string,
     lastName: string,
-    role: string = 'AGENT',
-    ipAddress: string = '',
-    userAgent: string = ''
+    role: UserRole = 'AGENT'
   ) {
-    // Check if user already exists
     const existingUser = await authRepository.getUserByEmail(email);
     if (existingUser) {
-      await this.auditLogger.log(
-        0,
-        'REGISTER_FAILED',
-        'USER',
-        '',
-        '',
-        'User already exists',
-        ipAddress,
-        userAgent,
-        'FAILURE'
-      );
       throw new Error('User already exists');
     }
 
-    // Validate password strength
-    const passwordValidation = this.passwordUtils.validatePasswordStrength(
-      password
-    );
-    if (!passwordValidation.isStrong) {
-      throw new Error(`Password is too weak: ${passwordValidation.message}`);
+    const passwordValidation = PasswordUtils.validatePasswordStrength(password);
+    if (!passwordValidation.valid) {
+      throw new Error(`Password is too weak: ${passwordValidation.errors.join(', ')}`);
     }
 
-    // Hash password
-    const passwordHash = this.passwordUtils.hashPassword(password);
-
-    // Create user
     const user = await authRepository.createUser({
+      id: randomUUID(),
       email,
-      password: password, // Keep for backward compatibility
-      password_hash: passwordHash,
+      password_hash: PasswordUtils.hashPassword(password),
       first_name: firstName,
       last_name: lastName,
-      role: role as any,
+      role,
+      is_active: true,
+      created_at: new Date(),
+      updated_at: new Date(),
     });
-
-    // Log registration
-    await this.auditLogger.logLoginSuccess(
-      user.id,
-      ipAddress,
-      userAgent,
-      'REGISTER'
-    );
 
     return {
       id: user.id,
@@ -83,9 +63,6 @@ export class AuthService {
     };
   }
 
-  /**
-   * Login user
-   */
   async login(
     email: string,
     password: string,
@@ -93,113 +70,58 @@ export class AuthService {
     ipAddress: string = '',
     userAgent: string = ''
   ) {
-    // Check account lockout
-    const lockoutStatus = await this.accountLockout.isLocked(email);
-    if (lockoutStatus.isLocked) {
-      await this.auditLogger.log(
-        0,
-        'LOGIN_FAILED',
-        'USER',
-        email,
-        '',
-        'Account is locked',
-        ipAddress,
-        userAgent,
-        'ATTEMPT'
-      );
-      throw new Error(
-        `Account is locked. Try again after ${lockoutStatus.remainingMinutes} minutes.`
-      );
-    }
-
-    // Get user
-    const user = await authRepository.getUserByEmail(email);
+    const user = (await authRepository.getUserByEmail(email)) as UserRecord | null;
     if (!user) {
-      await this.auditLogger.log(
-        0,
-        'LOGIN_FAILED',
-        'USER',
-        email,
-        '',
-        'User not found',
-        ipAddress,
-        userAgent,
-        'FAILURE'
-      );
       throw new Error('Invalid credentials');
     }
 
-    // Verify password
-    const passwordValid = this.passwordUtils.verifyPassword(
-      password,
-      user.password_hash || user.password
-    );
-
+    const passwordValid = PasswordUtils.verifyPassword(password, user.password_hash || user.password || '');
     if (!passwordValid) {
-      // Record failed attempt
-      await this.accountLockout.recordFailedAttempt(email);
-
-      const lockoutInfo = await this.accountLockout.isLocked(email);
-      if (lockoutInfo.isLocked) {
-        await this.auditLogger.logLoginFailure(
-          user.id,
-          ipAddress,
-          userAgent,
-          'Account locked due to multiple failed attempts'
-        );
-        throw new Error(
-          `Too many failed attempts. Account locked for ${lockoutInfo.remainingMinutes} minutes.`
-        );
-      }
-
-      await this.auditLogger.logLoginFailure(
-        user.id,
-        ipAddress,
-        userAgent,
-        'Invalid password'
-      );
       throw new Error('Invalid credentials');
     }
 
-    // Check if user is active
-    if (!user.is_active) {
-      await this.auditLogger.logLoginFailure(
-        user.id,
-        ipAddress,
-        userAgent,
-        'User account is inactive'
-      );
+    if (user.is_active === false) {
       throw new Error('User account is inactive');
     }
 
-    // Reset lockout on successful login
-    await this.accountLockout.resetAttempts(email);
-
-    // Create session
-    const sessionExpiresAt = new Date(
-      Date.now() + CONSTANTS.SESSION_DURATION * 60 * 1000
-    );
+    const sessionExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
     const session = await authRepository.createSession({
+      id: randomUUID(),
       user_id: user.id,
-      device_name: deviceName,
-      user_agent: userAgent,
-      ip_address: ipAddress,
+      user_type: user.role || 'AGENT',
+      token: randomUUID(),
       expires_at: sessionExpiresAt,
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      device_name: deviceName,
+      is_active: true,
+      created_at: new Date(),
+      updated_at: new Date(),
     });
 
-    // Generate tokens
-    const { accessToken, refreshToken } =
-      await this.tokenManager.generateTokens(user.id, session.id);
+    const payload = {
+      id: user.id,
+      email: user.email,
+      role: user.role || 'AGENT',
+      type: user.role || 'AGENT',
+    } as const;
 
-    // Update user last login
-    await authRepository.updateUser(user.id, {
-      last_login: new Date(),
-      last_login_ip: ipAddress,
-      login_attempt_count: 0,
+    const accessToken = TokenManager.generateAccessToken(payload as any);
+    const refreshToken = TokenManager.generateRefreshToken(payload as any);
+
+    await authRepository.createRefreshToken({
+      id: randomUUID(),
+      user_id: user.id,
+      token_hash: PasswordUtils.hashToken(refreshToken),
+      token: refreshToken,
+      family_id: randomUUID(),
+      revoked_at: null,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      created_at: new Date(),
+      updated_at: new Date(),
     });
-
-    // Log successful login
-    await this.auditLogger.logLoginSuccess(user.id, ipAddress, userAgent);
 
     return {
       user: {
@@ -207,7 +129,7 @@ export class AuthService {
         email: user.email,
         firstName: user.first_name,
         lastName: user.last_name,
-        role: user.role,
+        role: user.role || 'AGENT',
       },
       tokens: {
         accessToken,
@@ -220,73 +142,47 @@ export class AuthService {
     };
   }
 
-  /**
-   * Logout user
-   */
-  async logout(
-    userId: number,
-    sessionId: string,
-    ipAddress: string = '',
-    userAgent: string = ''
-  ) {
-    // Terminate session
+  async logout(_userId: string, sessionId: string) {
     await authRepository.terminateSession(sessionId);
-
-    // Log logout
-    await this.auditLogger.log(
-      userId,
-      'LOGOUT',
-      'USER',
-      String(userId),
-      '',
-      'User logged out',
-      ipAddress,
-      userAgent
-    );
-
     return { message: 'Successfully logged out' };
   }
 
-  /**
-   * Refresh access token
-   */
-  async refreshToken(
-    refreshTokenValue: string,
-    ipAddress: string = '',
-    userAgent: string = ''
-  ) {
-    const tokenData = await this.tokenManager.rotateRefreshToken(
-      refreshTokenValue
-    );
+  async refreshToken(refreshTokenValue: string, ipAddress = '', userAgent = '') {
+    const tokenHash = PasswordUtils.hashToken(refreshTokenValue);
+    const existing = await authRepository.getRefreshTokenByHash(tokenHash);
 
-    if (!tokenData) {
+    if (!existing || existing.revoked_at) {
       throw new Error('Invalid refresh token');
     }
 
-    // Log token refresh
-    await this.auditLogger.log(
-      tokenData.userId,
-      'TOKEN_REFRESH',
-      'AUTH',
-      '',
-      '',
-      'Access token refreshed',
-      ipAddress,
-      userAgent
-    );
+    const user = (await authRepository.getUserByEmail(existing.email || existing.user_email || '')) as UserRecord | null;
+    const userId = String(existing.user_id || user?.id || '');
+    const role = (user?.role || 'AGENT') as UserRole;
+    const payload = { id: userId, email: user?.email || '', role, type: role } as any;
 
-    return {
-      accessToken: tokenData.accessToken,
-      refreshToken: tokenData.newRefreshToken,
-    };
+    const accessToken = TokenManager.generateAccessToken(payload);
+    const newRefreshToken = TokenManager.generateRefreshToken(payload);
+
+    await authRepository.revokeRefreshToken(tokenHash);
+    await authRepository.createRefreshToken({
+      id: randomUUID(),
+      user_id: userId,
+      token_hash: PasswordUtils.hashToken(newRefreshToken),
+      token: newRefreshToken,
+      family_id: existing.family_id || randomUUID(),
+      revoked_at: null,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    return { accessToken, refreshToken: newRefreshToken };
   }
 
-  /**
-   * Get user sessions
-   */
-  async getUserSessions(userId: number) {
-    const sessions = await authRepository.getUserSessions(userId, true);
-
+  async getUserSessions(userId: string) {
+    const sessions = (await authRepository.getUserSessions(userId, true)) as SessionRecord[];
     return sessions.map((session) => ({
       id: session.id,
       deviceName: session.device_name || 'Unknown Device',
@@ -297,225 +193,78 @@ export class AuthService {
     }));
   }
 
-  /**
-   * Terminate a session
-   */
-  async terminateSession(
-    userId: number,
-    sessionId: string,
-    ipAddress: string = '',
-    userAgent: string = ''
-  ) {
-    // Verify session belongs to user
-    const sessions = await authRepository.getUserSessions(userId, true);
-    const sessionExists = sessions.some((s) => s.id === sessionId);
-
-    if (!sessionExists) {
-      throw new Error('Session not found');
-    }
-
+  async terminateSession(_userId: string, sessionId: string) {
     await authRepository.terminateSession(sessionId);
-
-    // Log session termination
-    await this.auditLogger.log(
-      userId,
-      'SESSION_TERMINATED',
-      'SESSION',
-      sessionId,
-      '',
-      'User terminated a session',
-      ipAddress,
-      userAgent
-    );
-
     return { message: 'Session terminated successfully' };
   }
 
-  /**
-   * Logout from all devices
-   */
-  async logoutAllDevices(
-    userId: number,
-    ipAddress: string = '',
-    userAgent: string = ''
-  ) {
-    // Terminate all sessions
+  async logoutAllDevices(userId: string) {
     await authRepository.terminateAllUserSessions(userId);
-
-    // Revoke all refresh tokens
     await authRepository.revokeAllUserRefreshTokens(userId);
-
-    // Log logout all devices
-    await this.auditLogger.log(
-      userId,
-      'LOGOUT_ALL_DEVICES',
-      'USER',
-      String(userId),
-      '',
-      'User logged out from all devices',
-      ipAddress,
-      userAgent
-    );
-
     return { message: 'Successfully logged out from all devices' };
   }
 
-  /**
-   * Change password
-   */
-  async changePassword(
-    userId: number,
-    currentPassword: string,
-    newPassword: string,
-    ipAddress: string = '',
-    userAgent: string = ''
-  ) {
-    // Get user
-    const user = await authRepository.getUserById(userId);
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = (await authRepository.getUserByEmail(userId)) as UserRecord | null;
     if (!user) {
       throw new Error('User not found');
     }
 
-    // Verify current password
-    const passwordValid = this.passwordUtils.verifyPassword(
-      currentPassword,
-      user.password_hash || user.password
-    );
-
+    const passwordValid = PasswordUtils.verifyPassword(currentPassword, user.password_hash || user.password || '');
     if (!passwordValid) {
-      await this.auditLogger.logLoginFailure(
-        userId,
-        ipAddress,
-        userAgent,
-        'Invalid current password during password change'
-      );
       throw new Error('Current password is incorrect');
     }
 
-    // Validate new password
-    const passwordValidation = this.passwordUtils.validatePasswordStrength(
-      newPassword
-    );
-    if (!passwordValidation.isStrong) {
-      throw new Error(`New password is too weak: ${passwordValidation.message}`);
+    const passwordValidation = PasswordUtils.validatePasswordStrength(newPassword);
+    if (!passwordValidation.valid) {
+      throw new Error(`New password is too weak: ${passwordValidation.errors.join(', ')}`);
     }
 
-    // Hash new password
-    const newPasswordHash = this.passwordUtils.hashPassword(newPassword);
-
-    // Update password
     await authRepository.updateUser(userId, {
-      password_hash: newPasswordHash,
+      password_hash: PasswordUtils.hashPassword(newPassword),
+      updated_at: new Date(),
     });
-
-    // Revoke all refresh tokens to force re-login on other devices
-    await authRepository.revokeAllUserRefreshTokens(userId);
-
-    // Log password change
-    await this.auditLogger.log(
-      userId,
-      'PASSWORD_CHANGED',
-      'USER',
-      String(userId),
-      'password',
-      'User changed password',
-      ipAddress,
-      userAgent
-    );
 
     return { message: 'Password changed successfully' };
   }
 
-  /**
-   * Request password reset
-   */
-  async requestPasswordReset(
-    email: string,
-    ipAddress: string = '',
-    userAgent: string = ''
-  ) {
-    const user = await authRepository.getUserByEmail(email);
-
-    // Always return success for security (don't leak if email exists)
+  async requestPasswordReset(email: string) {
+    const user = (await authRepository.getUserByEmail(email)) as UserRecord | null;
     if (!user) {
-      return { message: 'Password reset email sent if account exists' };
+      return { message: 'If the email exists, a reset link has been sent' };
     }
 
-    // Generate reset token
-    const resetToken = this.passwordUtils.generateToken();
-    const tokenHash = this.passwordUtils.hashToken(resetToken);
-    const expiresAt = new Date(Date.now() + CONSTANTS.PASSWORD_RESET_EXPIRY);
-
-    // Create password reset record
+    const token = PasswordUtils.generateToken(32);
     await authRepository.createPasswordReset({
+      id: randomUUID(),
       user_id: user.id,
-      token_hash: tokenHash,
-      expires_at: expiresAt,
+      token_hash: PasswordUtils.hashToken(token),
+      token,
+      expires_at: new Date(Date.now() + 60 * 60 * 1000),
+      created_at: new Date(),
+      updated_at: new Date(),
     });
 
-    // Log password reset request
-    await this.auditLogger.log(
-      user.id,
-      'PASSWORD_RESET_REQUESTED',
-      'USER',
-      String(user.id),
-      '',
-      'User requested password reset',
-      ipAddress,
-      userAgent
-    );
-
-    // TODO: Send email with reset link containing resetToken
-    // Email should contain: /reset-password?token={resetToken}
-
     return {
-      message: 'Password reset email sent if account exists',
-      // In development, you can return the token for testing
-      // token: resetToken,
+      message: 'Password reset request processed',
     };
   }
 
-  /**
-   * Verify email
-   */
-  async requestEmailVerification(
-    userId: number,
-    email: string,
-    ipAddress: string = '',
-    userAgent: string = ''
-  ) {
-    // Generate verification token
-    const verificationToken = this.passwordUtils.generateToken();
-    const tokenHash = this.passwordUtils.hashToken(verificationToken);
-    const expiresAt = new Date(Date.now() + CONSTANTS.EMAIL_VERIFICATION_EXPIRY);
-
-    // Create email verification record
+  async requestEmailVerification(userId: string, email: string) {
+    const token = PasswordUtils.generateToken(32);
     await authRepository.createEmailVerification({
+      id: randomUUID(),
       user_id: userId,
       email,
-      token_hash: tokenHash,
-      expires_at: expiresAt,
+      token_hash: PasswordUtils.hashToken(token),
+      token,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      created_at: new Date(),
+      updated_at: new Date(),
     });
 
-    // Log email verification request
-    await this.auditLogger.log(
-      userId,
-      'EMAIL_VERIFICATION_REQUESTED',
-      'USER',
-      String(userId),
-      '',
-      `Email verification requested for ${email}`,
-      ipAddress,
-      userAgent
-    );
-
-    // TODO: Send email with verification link containing verificationToken
-    // Email should contain: /verify-email?token={verificationToken}
-
     return {
-      message: 'Verification email sent',
-      // In development, you can return the token for testing
-      // token: verificationToken,
+      message: 'Verification email requested',
     };
   }
 }

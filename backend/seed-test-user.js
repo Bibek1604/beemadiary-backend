@@ -1,7 +1,11 @@
-const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcryptjs');
+const { prisma } = require('./src/config/db');
+const crypto = require('crypto');
 
-const prisma = new PrismaClient();
+function hashPassword(password) {
+  const salt = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+}
 
 async function main() {
   console.log('🌱 Creating test user...');
@@ -12,18 +16,18 @@ async function main() {
       where: { email: 'agent@test.com' }
     });
 
+    const password = 'password123';
+    const password_hash = hashPassword(password);
+
     if (existingUser) {
-      console.log('✅ Test user already exists:', existingUser.email);
+      // Update password_hash to PBKDF2 format so login works with server
+      await prisma.agent.update({ where: { email: 'agent@test.com' }, data: { password_hash } });
+      console.log('✅ Test user already exists; password updated:', existingUser.email);
       return;
     }
 
-    // Hash password
-    const password = 'password123';
-    const salt = await bcrypt.genSalt(10);
-    const password_hash = await bcrypt.hash(password, salt);
-
     // Create test user
-    const testUser = await prisma.agent.create({
+    const testUser = await prismaagent.create({
       data: {
         email: 'agent@test.com',
         full_name: 'Test Agent',
@@ -31,20 +35,23 @@ async function main() {
         password_hash: password_hash,
         agent_code: 'TEST001',
         status: 'ACTIVE',
+        is_active: true,
       }
     });
 
-    console.log('✅ Test user created successfully!');
-    console.log('\n📝 Login Credentials:');
+    console.log(' Test user created successfully!');
+    console.log('\n Login Credentials:');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`Email: ${testUser.email}`);
     console.log(`Password: ${password}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
   } catch (error) {
-    console.error('❌ Error creating test user:', error.message);
+    console.error(' Error creating test user:', error.message);
   } finally {
-    await prisma.$disconnect();
+    if (prisma.$disconnect) {
+      await prisma.$disconnect();
+    }
   }
 }
 

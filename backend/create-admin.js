@@ -1,5 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const { prisma } = require('./src/config/db');
 
 async function createAdmin() {
   try {
@@ -26,7 +25,9 @@ async function createAdmin() {
     }
     process.exit(1);
   } finally {
-    await prisma.$disconnect();
+    if (prisma.$disconnect) {
+      await prisma.$disconnect();
+    }
   }
 }
 
