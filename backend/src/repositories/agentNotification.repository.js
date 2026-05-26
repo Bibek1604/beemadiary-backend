@@ -1,5 +1,4 @@
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const { prisma } = require("../config/db");
 const BaseRepository = require("./base.repository");
 
 class AgentNotificationRepository extends BaseRepository {

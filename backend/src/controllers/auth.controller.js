@@ -1,4 +1,4 @@
-const authService = require("../services/auth.service");
+const authService = require("../services/auth.service.js");
 const asyncHandler = require("../utils/asyncHandler");
 
 /**
@@ -15,10 +15,7 @@ const adminLogin = asyncHandler(async (req, res) => {
     status: true,
     message: "Login successful",
     token: result.token,
-    data: {
-      id: result.admin.id,
-      email: result.admin.email,
-    },
+    data: result.admin,
   });
 });
 

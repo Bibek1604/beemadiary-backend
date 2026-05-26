@@ -3,7 +3,8 @@ const router = express.Router();
 const agentNotificationController = require("../controllers/agentNotification.controller");
 const validate = require("../middlewares/validate.middleware");
 const agentNotificationValidator = require("../validators/agentNotification.validator");
-const { verifyToken, requireRole } = require("../middlewares/auth.middleware");
+const authenticate = require("../middlewares/auth.middleware");
+const authorize = require("../middlewares/rbac.middleware");
 
 /**
  * @swagger
@@ -108,8 +109,8 @@ const { verifyToken, requireRole } = require("../middlewares/auth.middleware");
  */
 router.get(
   "/agent/notifications",
-  verifyToken,
-  requireRole("AGENT"),
+  authenticate,
+  authorize(["AGENT"]),
   validate(agentNotificationValidator.getNotifications, "query"),
   agentNotificationController.getNotifications
 );
@@ -150,8 +151,8 @@ router.get(
  */
 router.get(
   "/agent/notifications/unread/count",
-  verifyToken,
-  requireRole("AGENT"),
+  authenticate,
+  authorize(["AGENT"]),
   agentNotificationController.getUnreadCount
 );
 
@@ -219,8 +220,8 @@ router.get(
  */
 router.get(
   "/agent/notifications/:id",
-  verifyToken,
-  requireRole("AGENT"),
+  authenticate,
+  authorize(["AGENT"]),
   validate(agentNotificationValidator.getNotificationById, "params"),
   agentNotificationController.getNotificationById
 );
@@ -267,8 +268,8 @@ router.get(
  */
 router.patch(
   "/agent/notifications/:id/read",
-  verifyToken,
-  requireRole("AGENT"),
+  authenticate,
+  authorize(["AGENT"]),
   validate(agentNotificationValidator.markAsRead, "params"),
   agentNotificationController.markAsRead
 );

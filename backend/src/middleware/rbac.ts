@@ -1,8 +1,7 @@
 import { Response, NextFunction } from 'express';
-import { AuthenticatedRequest } from '../types';
+import { AuthenticatedRequest, UserRole } from '../types';
 import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
-import { UserRole } from '@prisma/client';
 
 /**
  * Check if user has required role
@@ -35,7 +34,7 @@ export const requireAdmin = (req: AuthenticatedRequest, res: Response, next: Nex
     );
   }
 
-  if (req.user.role !== 'ADMIN') {
+  if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
     return res.status(CONSTANTS.STATUS_CODES.FORBIDDEN).json(
       ResponseHandler.forbidden('Admin access required')
     );

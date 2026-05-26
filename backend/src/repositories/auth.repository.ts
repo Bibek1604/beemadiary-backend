@@ -1,5 +1,4 @@
-import { prisma } from '../config/database';
-import { User, Prisma } from '@prisma/client';
+import prisma from '../config/database';
 
 /**
  * Authentication Repository
@@ -9,7 +8,7 @@ export class AuthRepository {
   /**
    * Get user by email
    */
-  async getUserByEmail(email: string): Promise<User | null> {
+  async getUserByEmail(email: string): Promise<any | null> {
     return prisma.user.findUnique({
       where: { email },
     });
@@ -18,7 +17,7 @@ export class AuthRepository {
   /**
    * Get user by ID with relations
    */
-  async getUserById(id: number, includeRelations: boolean = false) {
+  async getUserById(id: string | number, includeRelations: boolean = false) {
     if (includeRelations) {
       return prisma.user.findUnique({
         where: { id },
@@ -40,7 +39,7 @@ export class AuthRepository {
   /**
    * Create a new user
    */
-  async createUser(data: Prisma.UserCreateInput): Promise<User> {
+  async createUser(data: any): Promise<any> {
     return prisma.user.create({
       data,
     });
@@ -49,10 +48,7 @@ export class AuthRepository {
   /**
    * Update user
    */
-  async updateUser(
-    id: number,
-    data: Prisma.UserUpdateInput
-  ): Promise<User> {
+  async updateUser(id: string | number, data: any): Promise<any> {
     return prisma.user.update({
       where: { id },
       data,
@@ -62,7 +58,7 @@ export class AuthRepository {
   /**
    * Create a new session
    */
-  async createSession(data: Prisma.SessionCreateInput) {
+  async createSession(data: any) {
     return prisma.session.create({
       data,
     });
@@ -71,8 +67,8 @@ export class AuthRepository {
   /**
    * Get user sessions
    */
-  async getUserSessions(userId: number, activeOnly: boolean = true) {
-    const where: Prisma.SessionWhereInput = {
+  async getUserSessions(userId: string | number, activeOnly: boolean = true) {
+    const where: Record<string, any> = {
       user_id: userId,
     };
 
@@ -99,7 +95,7 @@ export class AuthRepository {
   /**
    * Terminate all user sessions
    */
-  async terminateAllUserSessions(userId: number): Promise<void> {
+  async terminateAllUserSessions(userId: string | number): Promise<void> {
     await prisma.session.updateMany({
       where: { user_id: userId },
       data: { is_active: false },
@@ -109,7 +105,7 @@ export class AuthRepository {
   /**
    * Create refresh token
    */
-  async createRefreshToken(data: Prisma.RefreshTokenCreateInput) {
+  async createRefreshToken(data: any) {
     return prisma.refreshToken.create({
       data,
     });
@@ -137,7 +133,7 @@ export class AuthRepository {
   /**
    * Revoke all user refresh tokens
    */
-  async revokeAllUserRefreshTokens(userId: number): Promise<void> {
+  async revokeAllUserRefreshTokens(userId: string | number): Promise<void> {
     await prisma.refreshToken.updateMany({
       where: { user_id: userId },
       data: { revoked_at: new Date() },
@@ -157,7 +153,7 @@ export class AuthRepository {
   /**
    * Create audit log
    */
-  async createAuditLog(data: Prisma.AuditLogCreateInput) {
+  async createAuditLog(data: any) {
     return prisma.auditLog.create({
       data,
     });
@@ -166,7 +162,7 @@ export class AuthRepository {
   /**
    * Get user audit logs
    */
-  async getUserAuditLogs(userId: number, limit: number = 50) {
+  async getUserAuditLogs(userId: string | number, limit: number = 50) {
     return prisma.auditLog.findMany({
       where: { user_id: userId },
       orderBy: { created_at: 'desc' },
@@ -188,7 +184,7 @@ export class AuthRepository {
   /**
    * Get account lockout info
    */
-  async getAccountLockout(userId: number) {
+  async getAccountLockout(userId: string | number) {
     return prisma.accountLockout.findUnique({
       where: { user_id: userId },
     });
@@ -197,10 +193,7 @@ export class AuthRepository {
   /**
    * Create or update account lockout
    */
-  async upsertAccountLockout(
-    userId: number,
-    data: Prisma.AccountLockoutUpdateInput
-  ) {
+  async upsertAccountLockout(userId: string | number, data: any) {
     return prisma.accountLockout.upsert({
       where: { user_id: userId },
       create: {
@@ -214,7 +207,7 @@ export class AuthRepository {
   /**
    * Reset account lockout
    */
-  async resetAccountLockout(userId: number): Promise<void> {
+  async resetAccountLockout(userId: string | number): Promise<void> {
     await prisma.accountLockout.update({
       where: { user_id: userId },
       data: {
@@ -227,7 +220,7 @@ export class AuthRepository {
   /**
    * Create password reset token
    */
-  async createPasswordReset(data: Prisma.PasswordResetCreateInput) {
+  async createPasswordReset(data: any) {
     return prisma.passwordReset.create({
       data,
     });
@@ -264,7 +257,7 @@ export class AuthRepository {
   /**
    * Create email verification token
    */
-  async createEmailVerification(data: Prisma.EmailVerificationCreateInput) {
+  async createEmailVerification(data: any) {
     return prisma.emailVerification.create({
       data,
     });
@@ -319,7 +312,7 @@ export class AuthRepository {
   /**
    * Create 2FA settings
    */
-  async createTwoFactorAuth(data: Prisma.TwoFactorAuthCreateInput) {
+  async createTwoFactorAuth(data: any) {
     return prisma.twoFactorAuth.create({
       data,
     });

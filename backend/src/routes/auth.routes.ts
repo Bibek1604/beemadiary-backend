@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth.controller';
 import { verifyToken } from '../middleware/auth';
-import { asyncHandler } from '../middleware/asyncHandler';
-import { authLimiter } from '../middleware/security';
 import { validateBody } from '../middleware/validation';
 import { z } from 'zod';
-import { csrfProtection } from '../middleware/csrf';
+
+// JS controller that works with the actual admin/agent DB tables
+const jsAuthController = require('../controllers/auth.controller.js');
 
 const router = Router();
 
@@ -45,22 +45,36 @@ const verificationEmailSchema = z.object({
  */
 router.post(
   '/register',
-  authLimiter,
-  csrfProtection,
   validateBody(registerSchema),
-  asyncHandler((req, res) => authController.register(req, res))
+  authController.register
 );
 
 /**
  * POST /api/auth/login
- * Login user
+ * Login user (generic)
  */
 router.post(
   '/login',
-  authLimiter,
-  csrfProtection,
   validateBody(loginSchema),
-  asyncHandler((req, res) => authController.login(req, res))
+  authController.login
+);
+
+/**
+ * POST /api/auth/admin/login
+ * Admin login (used by admin panel) - uses JS controller with admin DB table
+ */
+router.post(
+  '/admin/login',
+  jsAuthController.adminLogin
+);
+
+/**
+ * POST /api/auth/agent/login
+ * Agent login (used by agent app) - uses JS controller with agent DB table
+ */
+router.post(
+  '/agent/login',
+  jsAuthController.agentLogin
 );
 
 /**
@@ -70,8 +84,7 @@ router.post(
 router.post(
   '/logout',
   verifyToken,
-  csrfProtection,
-  asyncHandler((req, res) => authController.logout(req, res))
+  authController.logout
 );
 
 /**
@@ -80,9 +93,8 @@ router.post(
  */
 router.post(
   '/refresh',
-  csrfProtection,
   validateBody(refreshTokenSchema),
-  asyncHandler((req, res) => authController.refreshToken(req, res))
+  authController.refreshToken
 );
 
 /**
@@ -92,7 +104,7 @@ router.post(
 router.get(
   '/sessions',
   verifyToken,
-  asyncHandler((req, res) => authController.getActiveSessions(req, res))
+  authController.getActiveSessions
 );
 
 /**
@@ -102,7 +114,7 @@ router.get(
 router.delete(
   '/sessions/:sessionId',
   verifyToken,
-  asyncHandler((req, res) => authController.terminateSession(req, res))
+  authController.terminateSession
 );
 
 /**
@@ -112,8 +124,7 @@ router.delete(
 router.post(
   '/logout-all',
   verifyToken,
-  csrfProtection,
-  asyncHandler((req, res) => authController.logoutAllDevices(req, res))
+  authController.logoutAllDevices
 );
 
 /**
@@ -123,9 +134,8 @@ router.post(
 router.post(
   '/change-password',
   verifyToken,
-  csrfProtection,
   validateBody(changePasswordSchema),
-  asyncHandler((req, res) => authController.changePassword(req, res))
+  authController.changePassword
 );
 
 /**
@@ -134,10 +144,8 @@ router.post(
  */
 router.post(
   '/forgot-password',
-  authLimiter,
-  csrfProtection,
   validateBody(forgotPasswordSchema),
-  asyncHandler((req, res) => authController.forgotPassword(req, res))
+  authController.forgotPassword
 );
 
 /**
@@ -147,9 +155,18 @@ router.post(
 router.post(
   '/send-verification',
   verifyToken,
-  csrfProtection,
   validateBody(verificationEmailSchema),
-  asyncHandler((req, res) => authController.sendVerificationEmail(req, res))
+  authController.sendVerificationEmail
+);
+
+/**
+ * GET /api/auth/me
+ * Get current user profile
+ */
+router.get(
+  '/me',
+  verifyToken,
+  authController.getCurrentUser
 );
 
 export default router;

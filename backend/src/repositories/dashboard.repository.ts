@@ -1,24 +1,25 @@
 import prisma from '../config/database';
 import { DateUtils } from '../utils/dateUtils';
-import { Decimal } from '@prisma/client/runtime/library';
+type Decimal = number;
 
 export class DashboardRepository {
   /**
    * Get summary statistics for agent/admin
    */
-  async getSummary(agentId?: number) {
-    const whereClause = agentId ? { agent_id: agentId } : {};
+  async getSummary(agentId?: string) {
+    const clientWhereClause = agentId ? { agent_id: agentId, deleted_at: null } : { deleted_at: null };
+    const policyWhereClause = agentId ? { agent_id: agentId, deleted_at: null } : { deleted_at: null };
 
     // Get total members
     const totalMembers = await prisma.client.count({
-      where: whereClause,
+      where: clientWhereClause,
     });
 
     // Get active members
     const activeMembers = await prisma.client.count({
       where: {
-        ...whereClause,
-        is_active: true,
+        ...clientWhereClause,
+        status: 'ACTIVE',
       },
     });
 
@@ -27,54 +28,48 @@ export class DashboardRepository {
 
     // Get overdue premiums count
     const now = new Date();
-    const overdueCount = await prisma.clientPolicy.count({
+    const overdueCount = await prisma.policy.count({
       where: {
-        ...whereClause,
+        ...policyWhereClause,
         premium_due_date: {
           lt: now,
         },
-        premium_due_paid: 'DUE',
-        policy_status: 'ACTIVE',
-        client: whereClause.agent_id ? { agent_id: agentId } : undefined,
+        status: 'ACTIVE',
       },
     });
 
     // Get lapsed policies count
-    const lapsedCount = await prisma.clientPolicy.count({
+    const lapsedCount = await prisma.policy.count({
       where: {
-        ...whereClause,
-        policy_status: 'LAPSED',
-        client: whereClause.agent_id ? { agent_id: agentId } : undefined,
+        ...policyWhereClause,
+        status: 'LAPSED',
       },
     });
 
-    // Get unread alerts count
-    const unreadAlerts = await prisma.notification.count({
-      where: {
-        is_read: false,
-        ...(agentId ? {} : {}),
-      },
+    // Get total policies
+    const totalPolicies = await prisma.policy.count({
+      where: policyWhereClause,
     });
 
     return {
       total_members: totalMembers,
       active_members: activeMembers,
       inactive_members: inactiveMembers,
+      total_policies: totalPolicies,
       overdue_premiums: overdueCount,
       lapsed_policies: lapsedCount,
-      unread_alerts: unreadAlerts,
     };
   }
 
   /**
    * Get birthdays - today and this month
    */
-  async getBirthdays(agentId?: number) {
+  async getBirthdays(agentId?: string) {
     const today = new Date();
     const currentMonth = today.getMonth();
     const currentDate = today.getDate();
 
-    const whereClause = agentId ? { agent_id: agentId } : {};
+    const whereClause = agentId ? { agent_id: agentId, deleted_at: null } : { deleted_at: null };
 
     const birthdays = await prisma.client.findMany({
       where: whereClause,
@@ -83,68 +78,87 @@ export class DashboardRepository {
         first_name: true,
         last_name: true,
         dob: true,
-        contact_number: true,
+        phone: true,
+        email: true,
+        profile_picture: true,
       },
     });
 
     const todayBirthdays = birthdays.filter((client) => {
       return (
-        client.dob.getMonth() === currentMonth && client.dob.getDate() === currentDate
+        client.dob && client.dob.getMonth() === currentMonth && client.dob.getDate() === currentDate
       );
     });
 
     const thisMonthBirthdays = birthdays.filter((client) => {
-      return client.dob.getMonth() === currentMonth;
+      return client.dob && client.dob.getMonth() === currentMonth;
     });
 
     return {
       today: todayBirthdays.map((b) => ({
-        ...b,
-        dob: DateUtils.formatDate(b.dob),
+        id: b.id,
+        name: `${b.first_name} ${b.last_name}`,
+        dob: b.dob ? DateUtils.formatDate(b.dob) : null,
+        phone: b.phone,
+        email: b.email,
+        profile_picture: b.profile_picture,
       })),
       this_month: thisMonthBirthdays.map((b) => ({
-        ...b,
-        dob: DateUtils.formatDate(b.dob),
+        id: b.id,
+        name: `${b.first_name} ${b.last_name}`,
+        dob: b.dob ? DateUtils.formatDate(b.dob) : null,
+        phone: b.phone,
+        email: b.email,
+        profile_picture: b.profile_picture,
       })),
       this_month_count: thisMonthBirthdays.length,
     };
   }
 
   /**
-   * Get overdue premiums with details
+   * Get overdue premiums with complete client details
    */
   async getOverduePremiums(agentId?: number) {
     const now = new Date();
 
-    const overduePolicies = await prisma.clientPolicy.findMany({
+    const overduePolicies = await prisma.policy.findMany({
       where: {
         premium_due_date: {
           lt: now,
         },
-        premium_due_paid: 'DUE',
-        policy_status: 'ACTIVE',
-        ...(agentId ? { client: { agent_id: agentId } } : {}),
+        status: 'ACTIVE',
+        deleted_at: null,
+        ...(agentId ? { agent_id: agentId } : {}),
       },
       include: {
-        client: {
+        client: true,
+        agent: {
           select: {
-            first_name: true,
-            last_name: true,
-            contact_number: true,
+            id: true,
+            full_name: true,
+            email: true,
           },
         },
+      },
+      orderBy: {
+        premium_due_date: 'asc',
       },
       take: 50,
     });
 
     return overduePolicies.map((policy) => ({
+      id: policy.id,
       client_name: `${policy.client.first_name} ${policy.client.last_name}`,
+      client_id: policy.client.id,
+      client_email: policy.client.email,
+      client_phone: policy.client.phone,
+      client_image: policy.client.profile_picture,
       policy_number: policy.policy_number,
-      premium_amount: Number(policy.premium_amount),
-      premium_due_date: DateUtils.formatDate(policy.premium_due_date),
-      days_overdue: DateUtils.daysOverdue(policy.premium_due_date),
-      contact_number: policy.client.contact_number,
-      policy_status: policy.policy_status,
+      plan_name: policy.plan_name,
+      premium_amount: policy.premium_amount ? Number(policy.premium_amount) : 0,
+      premium_due_date: policy.premium_due_date,
+      status: policy.status,
+      created_at: policy.created_at.toISOString(),
     }));
   }
 

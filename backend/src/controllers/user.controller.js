@@ -3,7 +3,7 @@ const ApiResponse = require("../utils/apiResponse");
 const asyncHandler = require("../utils/asyncHandler");
 
 const getProfile = asyncHandler(async (req, res) => {
-  const agentId = req.user.id; // User must be logged in
+  const agentId = req.user.id; 
 
   const profile = await userService.getAgentProfile(agentId);
 

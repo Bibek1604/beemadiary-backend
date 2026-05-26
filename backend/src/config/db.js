@@ -1,10 +1,10 @@
-const { PrismaClient } = require("@prisma/client");
-const env = require("./env");
+require("ts-node/register/transpile-only");
+const mongoClientModule = require("./mongoClient.ts");
 
-const prisma = new PrismaClient({
-  log: env.NODE_ENV === "development" ? ["query", "info", "warn", "error"] : ["error"],
-});
+const prisma = mongoClientModule.default || mongoClientModule;
+const { MongoConnectionManager } = mongoClientModule;
 
 module.exports = {
   prisma,
+  MongoConnectionManager,
 };

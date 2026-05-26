@@ -22,8 +22,8 @@ export const errorHandler = (
     statusCode: err.statusCode,
   });
 
-  // Prisma validation error
-  if (err.name === 'PrismaClientValidationError') {
+  // Mongo validation error
+  if (err.name === 'MongoValidationError') {
     return res.status(CONSTANTS.STATUS_CODES.BAD_REQUEST).json(
       ResponseHandler.error(
         'Invalid data provided',
@@ -33,9 +33,9 @@ export const errorHandler = (
     );
   }
 
-  // Prisma unique constraint error
-  if (err.name === 'PrismaClientKnownRequestError' && (err as any).code === 'P2002') {
-    const field = (err as any).meta?.target?.[0] || 'field';
+  // Mongo unique constraint error
+  if ((err as any).code === 11000 || err.name === 'MongoServerError') {
+    const field = (err as any).keyPattern ? Object.keys((err as any).keyPattern)[0] : 'field';
     return res.status(CONSTANTS.STATUS_CODES.BAD_REQUEST).json(
       ResponseHandler.error(
         `${field} already exists`,
@@ -45,21 +45,10 @@ export const errorHandler = (
     );
   }
 
-  // Prisma record not found error
-  if (err.name === 'PrismaClientKnownRequestError' && (err as any).code === 'P2025') {
+  // Mongo record not found error
+  if ((err as any).code === 'NOT_FOUND') {
     return res.status(CONSTANTS.STATUS_CODES.NOT_FOUND).json(
       ResponseHandler.notFound('Resource not found')
-    );
-  }
-
-  // Prisma foreign key constraint error
-  if (err.name === 'PrismaClientKnownRequestError' && (err as any).code === 'P2003') {
-    return res.status(CONSTANTS.STATUS_CODES.BAD_REQUEST).json(
-      ResponseHandler.error(
-        'Invalid reference: Related record not found',
-        CONSTANTS.STATUS_CODES.BAD_REQUEST,
-        [{ message: 'Foreign key constraint violation' }]
-      )
     );
   }
 

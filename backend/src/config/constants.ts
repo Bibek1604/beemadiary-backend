@@ -9,8 +9,9 @@ export const CONSTANTS = {
   PAGINATION_LIMIT: 10,
   
   // Rates
+  // Disabled for development - allows continuous testing without rate limit blocks
   RATE_LIMIT_WINDOW: 15 * 60 * 1000, // 15 minutes
-  RATE_LIMIT_MAX_REQUESTS: 100,
+  RATE_LIMIT_MAX_REQUESTS: process.env.NODE_ENV === 'development' ? 10000 : 100, // 10k for dev, 100 for prod
 
   // Errors
   ERRORS: {

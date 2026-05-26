@@ -24,7 +24,7 @@ router.post(
   '/profile-picture',
   verifyToken,
   csrfProtection,
-  imageHandler.createUploadMiddleware('profile-pics'),
+  imageHandler.createUploadMiddleware('profile-pics').single('file'),
   asyncHandler(async (req: any, res: Response) => {
     if (!req.file) {
       throw new NotFoundError('No file provided');
@@ -74,7 +74,7 @@ router.post(
   '/document',
   verifyToken,
   csrfProtection,
-  imageHandler.createUploadMiddleware('documents'),
+  imageHandler.createUploadMiddleware('documents').single('file'),
   asyncHandler(async (req: any, res: Response) => {
     if (!req.file) {
       throw new NotFoundError('No file provided');
@@ -210,7 +210,7 @@ router.post(
   '/bulk',
   verifyToken,
   csrfProtection,
-  imageHandler.createUploadMiddleware('documents'),
+  imageHandler.createUploadMiddleware('documents').array('files', 10),
   asyncHandler(async (req: any, res: Response) => {
     if (!req.files || req.files.length === 0) {
       throw new NotFoundError('No files provided');

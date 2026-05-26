@@ -1,5 +1,4 @@
 import { Request, Response, NextFunction } from 'express';
-import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
@@ -31,17 +30,12 @@ const sanitizeErrorMessage = (error: any, isDevelopment: boolean): string => {
   }
 
   // Production: generic messages
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    switch (error.code) {
-      case 'P2002':
-        return 'A unique constraint was violated';
-      case 'P2025':
-        return 'The requested resource was not found';
-      case 'P2003':
-        return 'A foreign key constraint was violated';
-      default:
-        return 'A database error occurred';
-    }
+  if (error?.code === 11000 || error?.name === 'MongoServerError') {
+    return 'A unique constraint was violated';
+  }
+
+  if (error?.name === 'MongoNetworkError' || error?.name === 'MongoServerSelectionError') {
+    return 'A database connection error occurred';
   }
 
   if (error instanceof SyntaxError) {
@@ -54,41 +48,6 @@ const sanitizeErrorMessage = (error: any, isDevelopment: boolean): string => {
 /**
  * Map Prisma errors to HTTP status codes
  */
-const mapPrismaErrorToStatus = (code: string): number => {
-  const mapping: Record<string, number> = {
-    P2000: CONSTANTS.STATUS_CODES.BAD_REQUEST, // The provided value for column is too long
-    P2001: CONSTANTS.STATUS_CODES.NOT_FOUND, // The record searched for in the where condition does not exist
-    P2002: CONSTANTS.STATUS_CODES.CONFLICT, // Unique constraint failed
-    P2003: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Foreign key constraint failed
-    P2004: CONSTANTS.STATUS_CODES.BAD_REQUEST, // A constraint failed on the database
-    P2005: CONSTANTS.STATUS_CODES.BAD_REQUEST, // The value stored in the database for the field is invalid
-    P2006: CONSTANTS.STATUS_CODES.BAD_REQUEST, // The provided value is too long
-    P2007: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Data validation error
-    P2008: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Failed to parse the query
-    P2009: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Failed to validate the query
-    P2010: CONSTANTS.STATUS_CODES.INTERNAL_ERROR, // Raw query failed
-    P2011: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Null constraint violation
-    P2012: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Missing a required value
-    P2013: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Missing the required argument
-    P2014: CONSTANTS.STATUS_CODES.BAD_REQUEST, // The change violated a required relation
-    P2015: CONSTANTS.STATUS_CODES.NOT_FOUND, // Related record not found
-    P2016: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Query interpretation error
-    P2017: CONSTANTS.STATUS_CODES.BAD_REQUEST, // The relation between tables has been violated
-    P2018: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Required relation violation
-    P2019: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Input error
-    P2020: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Value out of range
-    P2021: CONSTANTS.STATUS_CODES.BAD_REQUEST, // The table does not exist
-    P2022: CONSTANTS.STATUS_CODES.BAD_REQUEST, // The column does not exist
-    P2023: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Inconsistent column data
-    P2024: CONSTANTS.STATUS_CODES.INTERNAL_ERROR, // Failed to fetch
-    P2025: CONSTANTS.STATUS_CODES.NOT_FOUND, // Record not found
-    P2026: CONSTANTS.STATUS_CODES.BAD_REQUEST, // Database version not supported
-    P2027: CONSTANTS.STATUS_CODES.INTERNAL_ERROR, // Multiple errors occurred
-  };
-
-  return mapping[code] || CONSTANTS.STATUS_CODES.INTERNAL_ERROR;
-};
-
 /**
  * Extract error details from different error types
  */
@@ -102,37 +61,37 @@ const extractErrorDetails = (
 } => {
   const isDevelopment = process.env.NODE_ENV !== 'production';
 
-  // Prisma errors
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+  // MongoDB errors
+  if (error?.code === 11000 || error?.name === 'MongoServerError') {
     return {
-      type: 'PrismaError',
+      type: 'MongoError',
       message: sanitizeErrorMessage(error, isDevelopment),
-      statusCode: mapPrismaErrorToStatus(error.code),
-      details: isDevelopment ? { code: error.code, meta: error.meta } : undefined,
+      statusCode: CONSTANTS.STATUS_CODES.CONFLICT,
+      details: isDevelopment ? { code: error.code, keyPattern: error.keyPattern, keyValue: error.keyValue } : undefined,
     };
   }
 
-  if (error instanceof Prisma.PrismaClientValidationError) {
+  if (error?.name === 'ValidationError' || error?.name === 'BSONError') {
     return {
-      type: 'PrismaValidationError',
+      type: 'MongoValidationError',
       message: 'Data validation failed',
       statusCode: CONSTANTS.STATUS_CODES.BAD_REQUEST,
       details: isDevelopment ? error.message : undefined,
     };
   }
 
-  if (error instanceof Prisma.PrismaClientInitializationError) {
+  if (error?.name === 'MongoNetworkError' || error?.name === 'MongoServerSelectionError') {
     return {
-      type: 'PrismaDatabaseError',
+      type: 'MongoDatabaseError',
       message: 'Database connection failed',
       statusCode: CONSTANTS.STATUS_CODES.INTERNAL_ERROR,
       details: isDevelopment ? error.message : undefined,
     };
   }
 
-  if (error instanceof Prisma.PrismaClientRustPanicError) {
+  if (error?.name === 'MongoTopologyClosedError') {
     return {
-      type: 'PrismaCriticalError',
+      type: 'MongoCriticalError',
       message: 'Database critical error',
       statusCode: CONSTANTS.STATUS_CODES.INTERNAL_ERROR,
     };

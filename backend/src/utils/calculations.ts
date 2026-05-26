@@ -1,4 +1,4 @@
-import { Decimal } from '@prisma/client/runtime/library';
+type Decimal = number;
 
 export class Calculations {
   /**

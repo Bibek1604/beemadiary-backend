@@ -8,8 +8,19 @@ class BaseRepository {
    * @param {string} modelName - Model name in lowercase camelCase (matching prisma client keys e.g. 'admin', 'company')
    */
   constructor(modelName) {
-    this.model = prisma[modelName];
     this.modelName = modelName;
+  }
+
+  getModel() {
+    const lowerCaseName = this.modelName;
+    const pascalCaseName = lowerCaseName.charAt(0).toUpperCase() + lowerCaseName.slice(1);
+    const model = prisma[lowerCaseName] || prisma[pascalCaseName];
+
+    if (!model) {
+      throw new Error(`Prisma model delegate not found for '${this.modelName}'`);
+    }
+
+    return model;
   }
 
   /**
@@ -33,7 +44,7 @@ class BaseRepository {
       where.deleted_at = null;
     }
 
-    return this.model.findMany({
+    return this.getModel().findMany({
       where,
       include,
       orderBy,
@@ -51,7 +62,7 @@ class BaseRepository {
     if (this.hasSoftDelete() && where.deleted_at === undefined) {
       where.deleted_at = null;
     }
-    return this.model.count({ where });
+    return this.getModel().count({ where });
   }
 
   /**
@@ -64,7 +75,7 @@ class BaseRepository {
     if (this.hasSoftDelete()) {
       where.deleted_at = null;
     }
-    return this.model.findFirst({
+    return this.getModel().findFirst({
       where,
       include,
     });
@@ -79,7 +90,7 @@ class BaseRepository {
     if (this.hasSoftDelete() && where.deleted_at === undefined) {
       where.deleted_at = null;
     }
-    return this.model.findFirst({
+    return this.getModel().findFirst({
       where,
       include,
     });
@@ -90,7 +101,7 @@ class BaseRepository {
    * @param {object} data - Model creation payload
    */
   async create(data) {
-    return this.model.create({ data });
+    return this.getModel().create({ data });
   }
 
   /**
@@ -99,7 +110,7 @@ class BaseRepository {
    * @param {object} data - update changes payload
    */
   async update(id, data) {
-    return this.model.update({
+    return this.getModel().update({
       where: { id },
       data,
     });
@@ -111,12 +122,12 @@ class BaseRepository {
    */
   async delete(id) {
     if (this.hasSoftDelete()) {
-      return this.model.update({
+      return this.getModel().update({
         where: { id },
         data: { deleted_at: new Date() },
       });
     }
-    return this.model.delete({
+    return this.getModel().delete({
       where: { id },
     });
   }
@@ -126,7 +137,7 @@ class BaseRepository {
    * @param {string} id - Record UUID
    */
   async hardDelete(id) {
-    return this.model.delete({
+    return this.getModel().delete({
       where: { id },
     });
   }

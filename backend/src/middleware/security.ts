@@ -24,14 +24,38 @@ export const securityHeaders = helmet({
  * Apply CORS configuration
  */
 export const corsConfig = cors({
-  origin: (process.env.CORS_ORIGIN || 'http://localhost:3000').split(','),
+  origin: function (origin, callback) {
+    const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175').split(',').map(o => o.trim());
+
+    // Allow requests with no origin (like mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Allow localhost origins in development
+    if (process.env.NODE_ENV === 'development' && origin?.startsWith('http://localhost')) {
+      return callback(null, true);
+    }
+
+    // If not allowed, still callback with true for development, false for production
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Not allowed by CORS'));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   credentials: true,
   optionsSuccessStatus: 200,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 });
 
 /**
  * Rate limiting middleware
+ * Disabled in development for continuous testing
  */
 export const rateLimiter = rateLimit({
   windowMs: CONSTANTS.RATE_LIMIT_WINDOW,
@@ -40,7 +64,8 @@ export const rateLimiter = rateLimit({
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
   skip: (req) => {
-    // Skip rate limiting for health check
+    // Skip rate limiting for health check and development mode
+    if (process.env.NODE_ENV === 'development') return true;
     return req.path === '/health';
   },
 });
