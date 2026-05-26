@@ -1,8 +1,17 @@
+/**
+ * MongoDB seed script.
+ *
+ * Run with:  npm run seed
+ *
+ * Uses the Prisma-compatible Mongo adapter exposed by src/config/db.js so the
+ * same API used everywhere else in the codebase is used here too.
+ */
+require("dotenv/config");
 const { prisma } = require("../config/db");
 const bcrypt = require("bcryptjs");
 
 async function main() {
-  console.log("Seeding Mongo data...");
+  console.log("Seeding MongoDB data...");
 
   const adminEmail = "admin@beemadiary.com";
   const agentEmail = "agent@test.com";

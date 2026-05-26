@@ -131,11 +131,26 @@ router.post(
         }
       }
 
-      // Update client with profile picture URL if uploaded
+      // Persist all uploaded documents to the client record.
+      const updateData = {};
       if (uploads.profile_picture) {
+        updateData.profile_picture = uploads.profile_picture.url;
+        updateData.profile_picture_public_id = uploads.profile_picture.public_id;
+      }
+      // Append (don't overwrite) any existing docs/photos already on the client
+      const existing = client; // we already loaded it above
+      const existingDocs = Array.isArray(existing.documents) ? existing.documents : [];
+      const existingImages = Array.isArray(existing.images) ? existing.images : [];
+      if (uploads.supporting_documents && uploads.supporting_documents.length > 0) {
+        updateData.documents = [...existingDocs, ...uploads.supporting_documents];
+      }
+      if (uploads.photos && uploads.photos.length > 0) {
+        updateData.images = [...existingImages, ...uploads.photos];
+      }
+      if (Object.keys(updateData).length > 0) {
         await prisma.client.update({
           where: { id: client_id },
-          data: { profile_picture: uploads.profile_picture.url },
+          data: updateData,
         });
       }
 

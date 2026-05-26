@@ -156,6 +156,7 @@ const shapeClientRecord = (client) => {
     profile_picture_public_id: client.profile_picture_public_id,
     images: Array.isArray(client.images) ? client.images : [],
     supporting_images: Array.isArray(client.images) ? client.images : [],
+    documents: Array.isArray(client.documents) ? client.documents : [],
     image1: client.image1,
     image1_public_id: client.image1_public_id,
     image2: client.image2,

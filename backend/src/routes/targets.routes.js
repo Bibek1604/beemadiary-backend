@@ -1,4 +1,18 @@
+/**
+ * Agent monthly/yearly targets — MongoDB implementation.
+ *
+ * Routes (unchanged contract):
+ *   GET    /api/my-targets/                  list current agent's targets
+ *   POST   /api/my-targets/                  create a target
+ *   GET    /api/my-targets/:targetId         get a target
+ *   PATCH  /api/my-targets/:targetId         update a target
+ *   DELETE /api/my-targets/:targetId         soft-delete a target
+ *
+ * Stored in the `agentTarget` collection. `current_value` is computed on
+ * read by counting clients enrolled by the agent within the target's period.
+ */
 const express = require('express');
+const crypto = require('crypto');
 const { prisma } = require('../config/db');
 const ApiResponse = require('../utils/apiResponse');
 const { verifyToken } = require('../middleware/auth');
@@ -29,16 +43,13 @@ const normalizePeriodName = (targetType, periodName) => {
   if (targetType === 'MONTHLY') {
     const parts = raw.split(/\s+/);
     if (parts.length !== 2) {
-      return { ok: false, error: 'For MONTHLY targets, period_name must be in Mon YYYY format (e.g. Jan 2026)' };
+      return { ok: false, error: 'For MONTHLY targets, period_name must be in "Mon YYYY" format' };
     }
-
     const month = parts[0].slice(0, 1).toUpperCase() + parts[0].slice(1, 3).toLowerCase();
     const year = parts[1];
-
     if (!MONTHS.includes(month) || !/^\d{4}$/.test(year)) {
-      return { ok: false, error: 'For MONTHLY targets, use Mon YYYY format (e.g. Jan 2026)' };
+      return { ok: false, error: 'For MONTHLY targets, use "Mon YYYY" format' };
     }
-
     return { ok: true, value: `${month} ${year}` };
   }
 
@@ -48,244 +59,152 @@ const normalizePeriodName = (targetType, periodName) => {
 const getPeriodRange = (targetType, periodName) => {
   if (targetType === 'YEARLY') {
     const year = Number(periodName);
-    const start = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
-    const end = new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0));
-    return { start, end };
+    return {
+      start: new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0)),
+      end:   new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0)),
+    };
   }
-
   const [monthName, yearText] = periodName.split(' ');
   const month = MONTHS.indexOf(monthName);
   const year = Number(yearText);
-  const start = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
-  const end = month === 11
-    ? new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0))
-    : new Date(Date.UTC(year, month + 1, 1, 0, 0, 0, 0));
-
-  return { start, end };
+  return {
+    start: new Date(Date.UTC(year, month, 1, 0, 0, 0, 0)),
+    end:   month === 11
+      ? new Date(Date.UTC(year + 1, 0, 1, 0, 0, 0, 0))
+      : new Date(Date.UTC(year, month + 1, 1, 0, 0, 0, 0)),
+  };
 };
 
-const ensureTargetsTable = async () => {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS agent_targets (
-      id BIGSERIAL PRIMARY KEY,
-      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-      target_type VARCHAR(16) NOT NULL,
-      target_value INTEGER NOT NULL CHECK (target_value > 0),
-      period_name VARCHAR(32) NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      deleted_at TIMESTAMPTZ NULL
-    );
-  `);
-
-  await prisma.$executeRawUnsafe(`
-    CREATE INDEX IF NOT EXISTS idx_agent_targets_agent_id
-    ON agent_targets (agent_id);
-  `);
-
-  await prisma.$executeRawUnsafe(`
-    CREATE INDEX IF NOT EXISTS idx_agent_targets_period
-    ON agent_targets (target_type, period_name);
-  `);
-};
-
-const calculateCurrentAndProgress = async (target) => {
+const decorateTarget = async (target) => {
   const { start, end } = getPeriodRange(target.target_type, target.period_name);
 
-  const currentValue = await prisma.client.count({
-    where: {
-      agent_id: target.agent_id,
-      deleted_at: null,
-      created_at: {
-        gte: start,
-        lt: end,
+  let currentValue = 0;
+  try {
+    currentValue = await prisma.client.count({
+      where: {
+        agent_id: target.agent_id,
+        deleted_at: null,
+        created_at: { gte: start, lt: end },
       },
-    },
-  });
+    });
+  } catch (_err) {
+    currentValue = 0;
+  }
 
   const percentage = target.target_value > 0
     ? Number(((currentValue / target.target_value) * 100).toFixed(2))
     : 0;
 
   return {
-    id: Number(target.id),
+    id: target.id,
     target_type: target.target_type,
     target_value: Number(target.target_value),
     period_name: target.period_name,
     current_value: currentValue,
     progress_percentage: percentage,
-    created_at: new Date(target.created_at).toISOString(),
-    updated_at: new Date(target.updated_at).toISOString(),
+    created_at: target.created_at instanceof Date ? target.created_at.toISOString() : target.created_at,
+    updated_at: target.updated_at instanceof Date ? target.updated_at.toISOString() : target.updated_at,
   };
 };
 
+// ---------- LIST ----------
 router.get(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
   try {
-    await ensureTargetsTable();
-
     const agentId = req.user?.id;
-    if (!agentId) {
-      return res.status(401).json(ApiResponse.error('Authentication required'));
-    }
+    if (!agentId) return res.status(401).json(ApiResponse.error('Authentication required', null, 401));
 
-    const targets = await prisma.$queryRawUnsafe(
-      `
-      SELECT id, agent_id, target_type, target_value, period_name, created_at, updated_at
-      FROM agent_targets
-      WHERE agent_id = $1::uuid AND deleted_at IS NULL
-      ORDER BY created_at DESC
-      `,
-      agentId
-    );
+    const targets = await prisma.agentTarget.findMany({
+      where: { agent_id: agentId, deleted_at: null },
+      orderBy: { created_at: 'desc' },
+    });
 
-    const formatted = await Promise.all(targets.map(calculateCurrentAndProgress));
-
+    const formatted = await Promise.all(targets.map(decorateTarget));
     return res.status(200).json(
-      ApiResponse.success('Targets fetched successfully', {
-        results: formatted,
-        data: formatted,
-      })
+      ApiResponse.success('Targets fetched successfully', { results: formatted, data: formatted }, 200)
     );
   } catch (error) {
-    return res.status(400).json(ApiResponse.error('Failed to fetch targets', [error.message]));
+    console.error('[Targets List Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to fetch targets', error, 500));
   }
 });
 
+// ---------- CREATE ----------
 router.post(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
   try {
-    await ensureTargetsTable();
-
     const agentId = req.user?.id;
-    if (!agentId) {
-      return res.status(401).json(ApiResponse.error('Authentication required'));
-    }
+    if (!agentId) return res.status(401).json(ApiResponse.error('Authentication required', null, 401));
 
-    const targetType = parseTargetType(req.body?.target_type);
+    const targetType  = parseTargetType(req.body?.target_type);
     const targetValue = toNumber(req.body?.target_value);
     const periodValidation = normalizePeriodName(targetType, req.body?.period_name);
 
     const errors = [];
-    if (!TARGET_TYPES.includes(targetType)) {
-      errors.push('target_type must be MONTHLY or YEARLY');
-    }
-    if (!Number.isInteger(targetValue) || targetValue <= 0) {
-      errors.push('target_value must be a positive integer');
-    }
-    if (!periodValidation.ok) {
-      errors.push(periodValidation.error);
-    }
-
-    if (errors.length > 0) {
-      return res.status(400).json(ApiResponse.error('Validation failed', errors));
-    }
+    if (!TARGET_TYPES.includes(targetType))            errors.push('target_type must be MONTHLY or YEARLY');
+    if (!Number.isInteger(targetValue) || targetValue <= 0) errors.push('target_value must be a positive integer');
+    if (!periodValidation.ok)                          errors.push(periodValidation.error);
+    if (errors.length > 0) return res.status(400).json(ApiResponse.error('Validation failed', errors, 400));
 
     const periodName = periodValidation.value;
 
-    const existing = await prisma.$queryRawUnsafe(
-      `
-      SELECT id
-      FROM agent_targets
-      WHERE agent_id = $1::uuid AND target_type = $2 AND period_name = $3 AND deleted_at IS NULL
-      LIMIT 1
-      `,
-      agentId,
-      targetType,
-      periodName
-    );
-
-    if (Array.isArray(existing) && existing.length > 0) {
-      return res.status(409).json(
-        ApiResponse.error('Target already exists for this period and type')
-      );
+    const existing = await prisma.agentTarget.findFirst({
+      where: { agent_id: agentId, target_type: targetType, period_name: periodName, deleted_at: null },
+    });
+    if (existing) {
+      return res.status(409).json(ApiResponse.error('Target already exists for this period and type', null, 409));
     }
 
-    const inserted = await prisma.$queryRawUnsafe(
-      `
-      INSERT INTO agent_targets (agent_id, target_type, target_value, period_name)
-      VALUES ($1::uuid, $2, $3, $4)
-      RETURNING id, agent_id, target_type, target_value, period_name, created_at, updated_at
-      `,
-      agentId,
-      targetType,
-      targetValue,
-      periodName
-    );
+    const created = await prisma.agentTarget.create({
+      data: {
+        id: crypto.randomUUID(),
+        agent_id: agentId,
+        target_type: targetType,
+        target_value: targetValue,
+        period_name: periodName,
+        deleted_at: null,
+      },
+    });
 
-    const created = await calculateCurrentAndProgress(inserted[0]);
-
-    return res.status(201).json(ApiResponse.success('Target created successfully', created));
+    const decorated = await decorateTarget(created);
+    return res.status(201).json(ApiResponse.success('Target created successfully', decorated, 201));
   } catch (error) {
-    return res.status(400).json(ApiResponse.error('Failed to create target', [error.message]));
+    console.error('[Targets Create Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to create target', error, 500));
   }
 });
 
+// ---------- GET ----------
 router.get(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, async (req, res) => {
   try {
-    await ensureTargetsTable();
-
     const agentId = req.user?.id;
-    if (!agentId) {
-      return res.status(401).json(ApiResponse.error('Authentication required'));
-    }
+    if (!agentId) return res.status(401).json(ApiResponse.error('Authentication required', null, 401));
 
-    const targetId = toNumber(req.params?.targetId);
-    if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json(ApiResponse.error('Invalid target ID'));
-    }
+    const { targetId } = req.params;
+    const target = await prisma.agentTarget.findFirst({
+      where: { id: targetId, agent_id: agentId, deleted_at: null },
+    });
+    if (!target) return res.status(404).json(ApiResponse.error('Target not found', null, 404));
 
-    const rows = await prisma.$queryRawUnsafe(
-      `
-      SELECT id, agent_id, target_type, target_value, period_name, created_at, updated_at
-      FROM agent_targets
-      WHERE id = $1::bigint AND agent_id = $2::uuid AND deleted_at IS NULL
-      LIMIT 1
-      `,
-      targetId,
-      agentId
-    );
-
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(404).json(ApiResponse.error('Target not found'));
-    }
-
-    const target = await calculateCurrentAndProgress(rows[0]);
-    return res.status(200).json(ApiResponse.success('Target fetched successfully', target));
+    const decorated = await decorateTarget(target);
+    return res.status(200).json(ApiResponse.success('Target fetched successfully', decorated, 200));
   } catch (error) {
-    return res.status(400).json(ApiResponse.error('Failed to fetch target', [error.message]));
+    console.error('[Targets Get Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to fetch target', error, 500));
   }
 });
 
+// ---------- UPDATE ----------
 router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, async (req, res) => {
   try {
-    await ensureTargetsTable();
-
     const agentId = req.user?.id;
-    if (!agentId) {
-      return res.status(401).json(ApiResponse.error('Authentication required'));
-    }
+    if (!agentId) return res.status(401).json(ApiResponse.error('Authentication required', null, 401));
 
-    const targetId = toNumber(req.params?.targetId);
-    if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json(ApiResponse.error('Invalid target ID'));
-    }
+    const { targetId } = req.params;
+    const current = await prisma.agentTarget.findFirst({
+      where: { id: targetId, agent_id: agentId, deleted_at: null },
+    });
+    if (!current) return res.status(404).json(ApiResponse.error('Target not found', null, 404));
 
-    const currentRows = await prisma.$queryRawUnsafe(
-      `
-      SELECT id, agent_id, target_type, target_value, period_name, created_at, updated_at
-      FROM agent_targets
-      WHERE id = $1::bigint AND agent_id = $2::uuid AND deleted_at IS NULL
-      LIMIT 1
-      `,
-      targetId,
-      agentId
-    );
-
-    if (!Array.isArray(currentRows) || currentRows.length === 0) {
-      return res.status(404).json(ApiResponse.error('Target not found'));
-    }
-
-    const current = currentRows[0];
-    const targetType = req.body?.target_type ? parseTargetType(req.body.target_type) : current.target_type;
+    const targetType  = req.body?.target_type ? parseTargetType(req.body.target_type) : current.target_type;
     const targetValue = req.body?.target_value !== undefined ? toNumber(req.body.target_value) : Number(current.target_value);
     const periodValidation = normalizePeriodName(
       targetType,
@@ -293,95 +212,57 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
     );
 
     const errors = [];
-    if (!TARGET_TYPES.includes(targetType)) {
-      errors.push('target_type must be MONTHLY or YEARLY');
-    }
-    if (!Number.isInteger(targetValue) || targetValue <= 0) {
-      errors.push('target_value must be a positive integer');
-    }
-    if (!periodValidation.ok) {
-      errors.push(periodValidation.error);
-    }
+    if (!TARGET_TYPES.includes(targetType))            errors.push('target_type must be MONTHLY or YEARLY');
+    if (!Number.isInteger(targetValue) || targetValue <= 0) errors.push('target_value must be a positive integer');
+    if (!periodValidation.ok)                          errors.push(periodValidation.error);
+    if (errors.length > 0) return res.status(400).json(ApiResponse.error('Validation failed', errors, 400));
 
-    if (errors.length > 0) {
-      return res.status(400).json(ApiResponse.error('Validation failed', errors));
-    }
-
-    const duplicate = await prisma.$queryRawUnsafe(
-      `
-      SELECT id
-      FROM agent_targets
-      WHERE agent_id = $1::uuid
-        AND target_type = $2
-        AND period_name = $3
-        AND id <> $4::bigint
-        AND deleted_at IS NULL
-      LIMIT 1
-      `,
-      agentId,
-      targetType,
-      periodValidation.value,
-      targetId
-    );
-
-    if (Array.isArray(duplicate) && duplicate.length > 0) {
-      return res.status(409).json(
-        ApiResponse.error('Another target already exists for this period and type')
-      );
+    const duplicate = await prisma.agentTarget.findFirst({
+      where: {
+        agent_id: agentId,
+        target_type: targetType,
+        period_name: periodValidation.value,
+        deleted_at: null,
+      },
+    });
+    if (duplicate && duplicate.id !== current.id) {
+      return res.status(409).json(ApiResponse.error('Another target already exists for this period and type', null, 409));
     }
 
-    const updatedRows = await prisma.$queryRawUnsafe(
-      `
-      UPDATE agent_targets
-      SET target_type = $1, target_value = $2, period_name = $3, updated_at = NOW()
-      WHERE id = $4::bigint AND agent_id = $5::uuid AND deleted_at IS NULL
-      RETURNING id, agent_id, target_type, target_value, period_name, created_at, updated_at
-      `,
-      targetType,
-      targetValue,
-      periodValidation.value,
-      targetId,
-      agentId
-    );
+    const updated = await prisma.agentTarget.update({
+      where: { id: current.id },
+      data: { target_type: targetType, target_value: targetValue, period_name: periodValidation.value },
+    });
 
-    const updated = await calculateCurrentAndProgress(updatedRows[0]);
-    return res.status(200).json(ApiResponse.success('Target updated successfully', updated));
+    const decorated = await decorateTarget(updated);
+    return res.status(200).json(ApiResponse.success('Target updated successfully', decorated, 200));
   } catch (error) {
-    return res.status(400).json(ApiResponse.error('Failed to update target', [error.message]));
+    console.error('[Targets Update Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to update target', error, 500));
   }
 });
 
+// ---------- DELETE ----------
 router.delete(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, async (req, res) => {
   try {
-    await ensureTargetsTable();
-
     const agentId = req.user?.id;
-    if (!agentId) {
-      return res.status(401).json(ApiResponse.error('Authentication required'));
-    }
+    if (!agentId) return res.status(401).json(ApiResponse.error('Authentication required', null, 401));
 
-    const targetId = toNumber(req.params?.targetId);
-    if (!Number.isInteger(targetId) || targetId <= 0) {
-      return res.status(400).json(ApiResponse.error('Invalid target ID'));
-    }
+    const { targetId } = req.params;
+    const current = await prisma.agentTarget.findFirst({
+      where: { id: targetId, agent_id: agentId, deleted_at: null },
+    });
+    if (!current) return res.status(404).json(ApiResponse.error('Target not found', null, 404));
 
-    const deleted = await prisma.$executeRawUnsafe(
-      `
-      UPDATE agent_targets
-      SET deleted_at = NOW(), updated_at = NOW()
-      WHERE id = $1::bigint AND agent_id = $2::uuid AND deleted_at IS NULL
-      `,
-      targetId,
-      agentId
-    );
+    await prisma.agentTarget.update({
+      where: { id: current.id },
+      data: { deleted_at: new Date() },
+    });
 
-    if (!deleted) {
-      return res.status(404).json(ApiResponse.error('Target not found'));
-    }
-
-    return res.status(200).json(ApiResponse.success('Target deleted successfully', { id: targetId }));
+    return res.status(200).json(ApiResponse.success('Target deleted successfully', { id: current.id }, 200));
   } catch (error) {
-    return res.status(400).json(ApiResponse.error('Failed to delete target', [error.message]));
+    console.error('[Targets Delete Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to delete target', error, 500));
   }
 });
 

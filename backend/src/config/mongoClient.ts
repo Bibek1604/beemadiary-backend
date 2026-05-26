@@ -231,6 +231,23 @@ function getRelationSpecs(collectionName: string): Record<string, RelationSpec> 
   return relationMap[collectionName] || {};
 }
 
+/**
+ * The MongoDB Node driver changed the return shape of `findOneAndUpdate`,
+ * `findOneAndDelete`, and `findOneAndReplace` between v5 and v6+:
+ *
+ *   - v5:  { value: <doc> | null, ok: 1, lastErrorObject: {...} }
+ *   - v6+: <doc> | null   (with `{ includeResultMetadata: true }` to get the old shape)
+ *
+ * Normalise both shapes to just the document (or null).
+ */
+function unwrapMongoResult(raw: any): any {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'object' && raw !== null && 'value' in raw && 'ok' in raw) {
+    return raw.value ?? null;
+  }
+  return raw;
+}
+
 class MongoConnectionManager {
   private static instance: MongoConnectionManager;
   private client: MongoClient | null = null;
@@ -413,17 +430,21 @@ class MongoDelegate {
 
   async update(options: { where: MongoWhere; data: Record<string, any> }) {
     const collection = await this.collection();
-    const updated = await collection.findOneAndUpdate(
+    const raw = await collection.findOneAndUpdate(
       toMongoFilter(options.where),
       { $set: { ...options.data, updated_at: new Date() } },
       { returnDocument: 'after' }
     );
 
-    if (!updated || !updated.value) {
+    // MongoDB Node driver v6+ returns the document directly (or null).
+    // Driver v5 returned { value, ok, lastErrorObject }. Support both.
+    const doc = unwrapMongoResult(raw);
+
+    if (!doc) {
       throw new Error(`Record not found in ${this.collectionName}`);
     }
 
-    return updated.value;
+    return doc;
   }
 
   async updateMany(options: { where?: MongoWhere; data: Record<string, any> }) {
@@ -433,8 +454,8 @@ class MongoDelegate {
 
   async delete(options: { where: MongoWhere }) {
     const collection = await this.collection();
-    const deleted = await collection.findOneAndDelete(toMongoFilter(options.where));
-    return deleted?.value ?? null;
+    const raw = await collection.findOneAndDelete(toMongoFilter(options.where));
+    return unwrapMongoResult(raw);
   }
 
   async deleteMany(options: { where?: MongoWhere }) {
@@ -449,7 +470,7 @@ class MongoDelegate {
 
   async upsert(options: { where: MongoWhere; create: Record<string, any>; update: Record<string, any> }) {
     const collection = await this.collection();
-    const result = await collection.findOneAndUpdate(
+    const raw = await collection.findOneAndUpdate(
       toMongoFilter(options.where),
       {
         $set: { ...options.update, updated_at: new Date() },
@@ -458,7 +479,7 @@ class MongoDelegate {
       { upsert: true, returnDocument: 'after' }
     );
 
-    return result?.value ?? null;
+    return unwrapMongoResult(raw);
   }
 
   async groupBy(options: { by: string[]; where?: MongoWhere; _count?: boolean }) {
@@ -473,6 +494,85 @@ class MongoDelegate {
     }
 
     return Array.from(groups.values());
+  }
+
+  /**
+   * Prisma-style aggregate: { where, _sum: {field:true}, _count: true|{...},
+   * _avg, _min, _max }. Returns { _sum:{...}, _count:N, _avg:{...}, ... } where
+   * absent groups default to 0/null so callers don't crash on `.field` access.
+   */
+  async aggregate(options: {
+    where?: MongoWhere;
+    _sum?: Record<string, boolean>;
+    _count?: boolean | Record<string, boolean>;
+    _avg?: Record<string, boolean>;
+    _min?: Record<string, boolean>;
+    _max?: Record<string, boolean>;
+  } = {}) {
+    const collection = await this.collection();
+    const match = toMongoFilter(options.where || {});
+
+    const group: Record<string, any> = { _id: null };
+    const opMap: Array<[string, '$sum' | '$avg' | '$min' | '$max']> = [
+      ['_sum', '$sum'],
+      ['_avg', '$avg'],
+      ['_min', '$min'],
+      ['_max', '$max'],
+    ];
+
+    for (const [key, mongoOp] of opMap) {
+      const spec = (options as any)[key] as Record<string, boolean> | undefined;
+      if (!spec) continue;
+      for (const [field, include] of Object.entries(spec)) {
+        if (!include) continue;
+        group[`${key}__${field}`] = { [mongoOp]: `$${field}` };
+      }
+    }
+
+    const wantsCount = options._count !== undefined && options._count !== false;
+    if (wantsCount) {
+      group._count__total = { $sum: 1 };
+      if (typeof options._count === 'object' && options._count) {
+        for (const [field, include] of Object.entries(options._count)) {
+          if (!include) continue;
+          // Count non-null values for the given field.
+          group[`_count__${field}`] = {
+            $sum: { $cond: [{ $ne: [`$${field}`, null] }, 1, 0] },
+          };
+        }
+      }
+    }
+
+    const pipeline: any[] = [];
+    if (Object.keys(match).length) pipeline.push({ $match: match });
+    pipeline.push({ $group: group });
+
+    const [row] = await collection.aggregate(pipeline).toArray();
+
+    const result: Record<string, any> = {};
+    for (const [keyKind, _mongoOp] of opMap) {
+      const spec = (options as any)[keyKind] as Record<string, boolean> | undefined;
+      if (!spec) continue;
+      result[keyKind] = {};
+      for (const [field, include] of Object.entries(spec)) {
+        if (!include) continue;
+        const value = row?.[`${keyKind}__${field}`];
+        // Prisma returns 0/null when no rows matched; mirror that.
+        result[keyKind][field] = keyKind === '_sum' ? (value ?? 0) : (value ?? null);
+      }
+    }
+    if (wantsCount) {
+      if (typeof options._count === 'object' && options._count) {
+        result._count = {};
+        for (const [field, include] of Object.entries(options._count)) {
+          if (!include) continue;
+          result._count[field] = row?.[`_count__${field}`] ?? 0;
+        }
+      } else {
+        result._count = row?._count__total ?? 0;
+      }
+    }
+    return result;
   }
 }
 

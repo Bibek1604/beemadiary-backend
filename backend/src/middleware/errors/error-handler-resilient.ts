@@ -216,32 +216,29 @@ export const globalErrorHandlerResilient = (
   }
 };
 
+function handleMongoError(error: any, _requestId: string): AppError {
+  if (error?.code === 11000 || error?.name === 'MongoServerError') {
+    return new ConflictError(
+      `A record with this ${Object.keys(error.keyPattern || {})[0] || 'field'} already exists. Please use a different value.`
+    );
+  }
+
+  if (error?.name === 'ValidationError' || error?.name === 'BSONError') {
+    return new ValidationError(
+      'Invalid data provided. Please check your input.',
+      [{ field: 'unknown', message: 'Validation failed' }]
+    );
+  }
+
+  if (error?.name === 'MongoNetworkError' || error?.name === 'MongoServerSelectionError') {
+    return new DatabaseError('Database connection lost. Please try again.', error, 503);
+  }
+
+  return new DatabaseError('A database error occurred. Please try again later.', error, 500);
+}
+
 function handleErrorSafely(
   error: any,
-      function handleMongoError(error: any, requestId: string): AppError {
-        if (error?.code === 11000 || error?.name === 'MongoServerError') {
-          return new ConflictError(
-            `A record with this ${Object.keys(error.keyPattern || {})[0] || 'field'} already exists. Please use a different value.`
-          );
-        }
-
-        if (error?.name === 'ValidationError' || error?.name === 'BSONError') {
-          return new ValidationError(
-            'Invalid data provided. Please check your input.',
-            [{ field: 'unknown', message: 'Validation failed' }]
-          );
-        }
-
-        if (error?.name === 'MongoNetworkError' || error?.name === 'MongoServerSelectionError') {
-          return new DatabaseError(
-            'Database connection lost. Please try again.',
-            error,
-            503
-          );
-        }
-  
-        return new DatabaseError('A database error occurred. Please try again later.', error, 500);
-      }
   req: any,
   res: Response,
   requestId: string,

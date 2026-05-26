@@ -843,8 +843,8 @@ router.post(
     if (policyNumberInput?.trim()) policyDataToCreate.policy_number = policyNumberInput.trim();
     else policyDataToCreate.policy_number = `LIC-POL-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
     if (policyTerm?.trim()) policyDataToCreate.policy_term = policyTerm.trim();
-    if (sumAssured && isValidNumber(sumAssured)) policyDataToCreate.sum_assured = new Prisma.Decimal(sumAssured);
-    if (premiumAmount && isValidNumber(premiumAmount)) policyDataToCreate.premium_amount = new Prisma.Decimal(premiumAmount);
+    if (sumAssured && isValidNumber(sumAssured)) policyDataToCreate.sum_assured = Number(sumAssured);
+    if (premiumAmount && isValidNumber(premiumAmount)) policyDataToCreate.premium_amount = Number(premiumAmount);
     if (abPwb?.trim()) policyDataToCreate.ab_pwb = abPwb.trim();
     if (doc) {
       const docDate = new Date(doc);
@@ -876,20 +876,25 @@ router.post(
       policyDataToCreate.status = "PENDING";
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const client = await tx.client.create({ data: clientData });
-
-      let policyRecord = null;
+    // Mongo doesn't do multi-document ACID transactions through our adapter;
+    // we create the client first, then the policy. If policy creation fails we
+    // best-effort-delete the orphan client so the user can retry cleanly.
+    const client = await prisma.client.create({ data: clientData });
+    let policyRecord = null;
+    try {
       if (Object.keys(policyDataToCreate).length > 3) {
         const policyDataWithClientId = {
           ...policyDataToCreate,
           client_id: client.id,
         };
-        policyRecord = await tx.policy.create({ data: policyDataWithClientId });
+        policyRecord = await prisma.policy.create({ data: policyDataWithClientId });
       }
-
-      return { client, policy: policyRecord };
-    });
+    } catch (policyErr) {
+      console.error('[CLIENT_ENROLL] Policy create failed, rolling back client:', policyErr);
+      try { await prisma.client.delete({ where: { id: client.id } }); } catch (_) {}
+      throw policyErr;
+    }
+    const result = { client, policy: policyRecord };
 
     console.log('[CLIENT_ENROLL] Policy data created:', {
       plan_name: policyDataToCreate.plan_name,
@@ -1345,9 +1350,12 @@ router.put(
     const fallbackCompany = await prisma.company.findFirst({ select: { id: true } });
     const companyId = agent?.company_id || fallbackCompany?.id || null;
 
-    // Verify ownership
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
+    // Verify ownership — accept either the Mongo UUID `id` or the business
+    // `client_id` (e.g. "BM-000000000123"), matching what GET /client/:id accepts.
+    const client = await prisma.client.findFirst({
+      where: {
+        OR: [{ id: clientId }, { client_id: clientId }],
+      },
       include: { policies: true },
     });
 
@@ -1533,14 +1541,14 @@ router.put(
     if (sumAssured) {
       const parsedSum = parseFloat(sumAssured);
       if (!Number.isNaN(parsedSum) && parsedSum > 0) {
-        policyUpdateData.sum_assured = new Prisma.Decimal(parsedSum);
+        policyUpdateData.sum_assured = Number(parsedSum);
       }
     }
 
     if (premiumAmount) {
       const parsedPremium = parseFloat(premiumAmount);
       if (!Number.isNaN(parsedPremium) && parsedPremium > 0) {
-        policyUpdateData.premium_amount = new Prisma.Decimal(parsedPremium);
+        policyUpdateData.premium_amount = Number(parsedPremium);
       }
     }
 
@@ -1557,9 +1565,10 @@ router.put(
       );
     }
 
+    // Use the resolved Mongo `id`, not the URL param (which may be the business id).
     const updatedClient = Object.keys(updateData).length > 0
       ? await prisma.client.update({
-          where: { id: clientId },
+          where: { id: client.id },
           data: updateData,
         })
       : client;
@@ -1567,7 +1576,7 @@ router.put(
     let updatedPolicy = null;
     if (Object.keys(policyUpdateData).length > 0) {
       const existingPolicy = client.policies?.[0] || await prisma.policy.findFirst({
-        where: { client_id: clientId, deleted_at: null },
+        where: { client_id: client.id, deleted_at: null },
         orderBy: { created_at: "desc" },
       });
 
@@ -1644,8 +1653,10 @@ router.delete(["/client/:clientId", "/enrollment/:clientId", "/enrollment/:clien
       return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
     }
 
-    const client = await prisma.client.findUnique({
-      where: { id: clientId },
+    const client = await prisma.client.findFirst({
+      where: {
+        OR: [{ id: clientId }, { client_id: clientId }],
+      },
     });
 
     if (!client) {
@@ -1668,18 +1679,19 @@ router.delete(["/client/:clientId", "/enrollment/:clientId", "/enrollment/:clien
       );
     }
 
+    // Use the resolved Mongo `id`, not the URL param (which may be the business id).
     await prisma.client.update({
-      where: { id: clientId },
+      where: { id: client.id },
       data: { deleted_at: new Date(), status: "INACTIVE" },
     });
 
     res.status(200).json(
-      ApiResponse.success("Client deleted / deactivated successfully", { client_id: clientId })
+      ApiResponse.success("Client deleted / deactivated successfully", { client_id: client.id })
     );
   } catch (error) {
     console.error("[Delete Client Error]:", error);
     res.status(500).json(
-      ApiResponse.error("Failed to delete client", null, 500)
+      ApiResponse.error("Failed to delete client", error, 500)
     );
   }
 });

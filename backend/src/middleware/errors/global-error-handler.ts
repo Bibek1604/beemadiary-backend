@@ -107,13 +107,11 @@ function classifyError(error: any, requestId: string): AppError {
   if (error?.name === 'MongoNetworkError' || error?.name === 'MongoServerSelectionError') {
     return new DatabaseError('Database connection lost. Please try again.', error, 503);
   }
-function handlePrismaError(_error: any, _requestId: string): AppError {
-  return new DatabaseError(
-    'Unable to process your request. Please try again later.',
-    _error,
-    503
-  );
-}
+  if (
+    error?.name === 'TimeoutError' ||
+    error?.code === 'ETIMEDOUT' ||
+    error?.code === 'ESOCKETTIMEDOUT'
+  ) {
     return new TimeoutError('Request');
   }
 
@@ -152,46 +150,6 @@ function handlePrismaError(_error: any, _requestId: string): AppError {
   );
 }
 
-function handlePrismaError(
-      function handlePrismaError(_error: any, _requestId: string): AppError {
-        return new DatabaseError('A database error occurred. Please try again later.', _error, 500);
-      }
-        'Database authentication failed. Please try again later.',
-        error,
-        503
-      );
-
-    case 'P1000':
-    case 'P1001':
-    case 'P1002':
-      return new DatabaseError(
-        'Cannot connect to database. Please try again later.',
-        error,
-        503
-      );
-
-    case 'P2034':
-      return new DatabaseError(
-        'Transaction failed. Please try your request again.',
-        error,
-        503
-      );
-
-    default:
-      logger.error('[UNHANDLED PRISMA ERROR]', {
-        requestId,
-        code,
-        message: error.message,
-        meta: error.meta,
-      });
-
-      return new DatabaseError(
-        'Unable to process your request. Please try again later.',
-        error,
-        503
-      );
-  }
-}
 
 function buildErrorResponse(
   error: AppError,
