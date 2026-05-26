@@ -34,7 +34,7 @@ export const requireAdmin = (req: AuthenticatedRequest, res: Response, next: Nex
     );
   }
 
-  if (req.user.role !== 'ADMIN') {
+  if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
     return res.status(CONSTANTS.STATUS_CODES.FORBIDDEN).json(
       ResponseHandler.forbidden('Admin access required')
     );

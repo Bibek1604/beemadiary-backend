@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { authController } from '../controllers/auth.controller';
 import { verifyToken } from '../middleware/auth';
-import { authLimiter } from '../middleware/security';
 import { validateBody } from '../middleware/validation';
 import { z } from 'zod';
-import { csrfProtection } from '../middleware/csrf';
+
+// JS controller that works with the actual admin/agent DB tables
+const jsAuthController = require('../controllers/auth.controller.js');
 
 const router = Router();
 
@@ -44,22 +45,36 @@ const verificationEmailSchema = z.object({
  */
 router.post(
   '/register',
-  authLimiter,
-  csrfProtection,
   validateBody(registerSchema),
   authController.register
 );
 
 /**
  * POST /api/auth/login
- * Login user
+ * Login user (generic)
  */
 router.post(
   '/login',
-  authLimiter,
-  csrfProtection,
   validateBody(loginSchema),
   authController.login
+);
+
+/**
+ * POST /api/auth/admin/login
+ * Admin login (used by admin panel) - uses JS controller with admin DB table
+ */
+router.post(
+  '/admin/login',
+  jsAuthController.adminLogin
+);
+
+/**
+ * POST /api/auth/agent/login
+ * Agent login (used by agent app) - uses JS controller with agent DB table
+ */
+router.post(
+  '/agent/login',
+  jsAuthController.agentLogin
 );
 
 /**
@@ -69,7 +84,6 @@ router.post(
 router.post(
   '/logout',
   verifyToken,
-  csrfProtection,
   authController.logout
 );
 
@@ -79,7 +93,6 @@ router.post(
  */
 router.post(
   '/refresh',
-  csrfProtection,
   validateBody(refreshTokenSchema),
   authController.refreshToken
 );
@@ -111,7 +124,6 @@ router.delete(
 router.post(
   '/logout-all',
   verifyToken,
-  csrfProtection,
   authController.logoutAllDevices
 );
 
@@ -122,7 +134,6 @@ router.post(
 router.post(
   '/change-password',
   verifyToken,
-  csrfProtection,
   validateBody(changePasswordSchema),
   authController.changePassword
 );
@@ -133,8 +144,6 @@ router.post(
  */
 router.post(
   '/forgot-password',
-  authLimiter,
-  csrfProtection,
   validateBody(forgotPasswordSchema),
   authController.forgotPassword
 );
@@ -146,7 +155,6 @@ router.post(
 router.post(
   '/send-verification',
   verifyToken,
-  csrfProtection,
   validateBody(verificationEmailSchema),
   authController.sendVerificationEmail
 );

@@ -4,7 +4,8 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import { logger } from '../../utils/logger';
+const _loggerModule = require('../../utils/logger');
+const logger = _loggerModule.default || _loggerModule;
 import {
   AppError,
   ValidationError,

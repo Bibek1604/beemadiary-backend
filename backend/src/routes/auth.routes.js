@@ -3,7 +3,6 @@ const router = express.Router();
 const authController = require("../controllers/auth.controller");
 const validate = require("../middlewares/validate.middleware");
 const authValidator = require("../validators/auth.validator");
-const { authLimiter } = require("../middlewares/rateLimit.middleware");
 
 /**
  * Admin Authentication Routes
@@ -46,14 +45,12 @@ const { authLimiter } = require("../middlewares/rateLimit.middleware");
  */
 router.post(
   "/admin/login",
-  authLimiter,
   validate(authValidator.login),
   authController.adminLogin
 );
 
 router.post(
   "/auth/login",
-  authLimiter,
   validate(authValidator.login),
   authController.adminLogin
 );
@@ -82,7 +79,6 @@ router.post(
  */
 router.post(
   "/agent/login",
-  authLimiter,
   validate(authValidator.login),
   authController.agentLogin
 );
@@ -122,7 +118,6 @@ router.post(
  */
 router.post(
   "/users/login",
-  authLimiter,
   validate(authValidator.login),
   authController.agentLogin
 );

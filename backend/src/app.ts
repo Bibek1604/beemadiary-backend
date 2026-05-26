@@ -32,6 +32,10 @@ import agentNotificationRoutes from './routes/agentNotification.routes';
 import swaggerOptions from './docs/swagger-complete';
 import { globalErrorHandler } from './middleware/errors/global-error-handler';
 
+// JS (CommonJS) routes that work with the actual admin/agent DB tables
+const jsAuthRoutes = require('./routes/auth.routes.js');
+const adminCompatRoutes = require('./routes/admin.compat.routes.js');
+
 const app: Express = express();
 
 // Initialize upload directories
@@ -77,7 +81,9 @@ app.get('/api/csrf-token', setCSRFToken, (req: Request, res: Response) => {
   });
 });
 
-// API Routes
+// API Routes - JS auth routes first (admin/agent login that works with actual DB tables)
+app.use('/api', jsAuthRoutes);
+app.use('/api/admin', adminCompatRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/user-panel', csrfProtection, dashboardRoutes);
