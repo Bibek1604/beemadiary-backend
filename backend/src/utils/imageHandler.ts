@@ -163,60 +163,68 @@ export const uploadImage = async (
       };
     }
 
-    // Process image if needed
-    if (options.resize && options.width && options.height) {
-      try {
-        await sharp(filePath)
-          .resize(options.width, options.height, { fit: 'cover' })
-          .jpeg({ quality: options.quality || 80 })
-          .toFile(filePath);
-      } catch (resizeError) {
-        console.warn('[Image Resize Error]', resizeError);
-        // Continue anyway
+    // Process image: convert to optimized WEBP and optionally resize
+    const buffer = fs.readFileSync(filePath);
+    let processedBuffer = buffer;
+
+    try {
+      let transformer = sharp(buffer).webp({ quality: options.quality || 80 });
+      if (options.resize && options.width && options.height) {
+        transformer = transformer.resize(options.width, options.height, { fit: 'cover' });
       }
+      processedBuffer = await transformer.toBuffer();
+    } catch (procErr) {
+      console.warn('[Image Process Warning]', procErr);
+      // fallback to original buffer
+      processedBuffer = buffer;
     }
 
-    // Try Cloudinary first
+    // Ensure upload directories exist
+    const uploadDir = path.join(LOCAL_STORAGE_PATH, folder);
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+    // Generate secure unique filename with .webp
+    const uniqueFileName = `${folder}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}.webp`;
+    const savedFilePath = path.join(uploadDir, uniqueFileName);
+
+    // Save optimized file permanently as backup
+    fs.writeFileSync(savedFilePath, processedBuffer);
+
+    const metadata = await getImageMetadata(savedFilePath);
+
+    // Try Cloudinary upload (non-blocking for local backup) with timeout protection
+    let cloudResult = null;
     if (process.env.CLOUDINARY_CLOUD_NAME) {
       try {
-        const result = await cloudinary.uploader.upload(filePath, {
-          folder: `dashboard/${folder}`,
-          resource_type: 'auto',
-          public_id: `${folder}-${Date.now()}`,
+        cloudResult = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            { folder: `${folder}`, resource_type: 'image', public_id: `${folder}-${Date.now()}` },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+
+          uploadStream.end(processedBuffer);
         });
-
-        // Clean up local temp file
-        fs.unlinkSync(filePath);
-
-        return {
-          success: true,
-          url: result.secure_url,
-          cloudinaryId: result.public_id,
-          size: result.bytes,
-          width: result.width,
-          height: result.height,
-          storage: 'cloudinary',
-        };
-      } catch (cloudinaryError) {
-        console.warn('[Cloudinary Upload Error]', cloudinaryError);
-        // Fall back to local storage
+      } catch (cloudErr) {
+        console.warn('[Cloudinary Upload Warning]', cloudErr);
+        cloudResult = null;
       }
     }
 
-    // Local storage fallback
-    const fileName = path.basename(filePath);
-    const relativeUrl = `/api/uploads/${folder}/${fileName}`;
-    const stats_updated = fs.statSync(filePath);
-    const metadata = await getImageMetadata(filePath);
+    // Build proxy URL that frontend should use (backend will try cloudinary first)
+    const backendProxyUrl = `/api/images/${encodeURIComponent(folder)}/${encodeURIComponent(uniqueFileName)}${cloudResult ? `?pub=${encodeURIComponent(cloudResult.public_id)}` : ''}`;
 
     return {
       success: true,
-      url: relativeUrl,
-      localPath: filePath,
-      size: stats_updated.size,
+      url: backendProxyUrl,
+      localPath: savedFilePath,
+      cloudinaryId: cloudResult ? cloudResult.public_id : undefined,
+      size: fs.statSync(savedFilePath).size,
       width: metadata.width,
       height: metadata.height,
-      storage: 'local',
+      storage: cloudResult ? 'cloudinary' : 'local',
     };
   } catch (error) {
     console.error('[Image Upload Error]', error);
@@ -262,73 +270,62 @@ export const uploadImageFromBuffer = async (
       };
     }
 
-    // Process image if needed
+    // Normalize and process buffer into WEBP optimized image
     let processedBuffer = buffer;
-    if (options.resize && options.width && options.height) {
-      try {
-        processedBuffer = await sharp(buffer)
-          .resize(options.width, options.height, { fit: 'cover' })
-          .jpeg({ quality: options.quality || 80 })
-          .toBuffer();
-      } catch (resizeError) {
-        console.warn('[Image Resize Error]', resizeError);
-        // Continue with original
+    try {
+      let transformer = sharp(buffer).webp({ quality: options.quality || 80 });
+      if (options.resize && options.width && options.height) {
+        transformer = transformer.resize(options.width, options.height, { fit: 'cover' });
       }
+      processedBuffer = await transformer.toBuffer();
+    } catch (procErr) {
+      console.warn('[Image Process Warning]', procErr);
+      processedBuffer = buffer;
     }
 
-    // Try Cloudinary first
+    // Ensure upload directory exists
+    const uploadDir = path.join(LOCAL_STORAGE_PATH, folder);
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+    // Create secure filename with .webp
+    const uniqueFileName = `${folder}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}.webp`;
+    const filePath = path.join(uploadDir, uniqueFileName);
+    fs.writeFileSync(filePath, processedBuffer);
+
+    const metadata = await getImageMetadata(filePath);
+
+    // Try Cloudinary upload
+    let cloudResult = null;
     if (process.env.CLOUDINARY_CLOUD_NAME) {
       try {
-        const result = await new Promise((resolve, reject) => {
+        cloudResult = await new Promise((resolve, reject) => {
           const uploadStream = cloudinary.uploader.upload_stream(
-            { folder: `dashboard/${folder}` },
+            { folder: `${folder}`, resource_type: 'image', public_id: `${folder}-${Date.now()}` },
             (error, result) => {
               if (error) reject(error);
               else resolve(result);
             }
           );
+
           uploadStream.end(processedBuffer);
         });
-
-        return {
-          success: true,
-          url: (result as any).secure_url,
-          cloudinaryId: (result as any).public_id,
-          size: (result as any).bytes,
-          width: (result as any).width,
-          height: (result as any).height,
-          storage: 'cloudinary',
-        };
-      } catch (cloudinaryError) {
-        console.warn('[Cloudinary Upload Error]', cloudinaryError);
-        // Fall back to local
+      } catch (cloudErr) {
+        console.warn('[Cloudinary Upload Warning]', cloudErr);
+        cloudResult = null;
       }
     }
 
-    // Local storage fallback
-    const uniqueFileName = `${folder}-${Date.now()}-${crypto
-      .randomBytes(4)
-      .toString('hex')}${path.extname(fileName)}`;
-    const uploadDir = path.join(LOCAL_STORAGE_PATH, folder);
-
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-
-    const filePath = path.join(uploadDir, uniqueFileName);
-    fs.writeFileSync(filePath, processedBuffer);
-
-    const metadata = await getImageMetadata(filePath);
-    const relativeUrl = `/api/uploads/${folder}/${uniqueFileName}`;
+    const backendProxyUrl = `/api/images/${encodeURIComponent(folder)}/${encodeURIComponent(uniqueFileName)}${cloudResult ? `?pub=${encodeURIComponent((cloudResult as any).public_id)}` : ''}`;
 
     return {
       success: true,
-      url: relativeUrl,
+      url: backendProxyUrl,
       localPath: filePath,
-      size: processedBuffer.length,
+      cloudinaryId: cloudResult ? (cloudResult as any).public_id : undefined,
+      size: fs.statSync(filePath).size,
       width: metadata.width,
       height: metadata.height,
-      storage: 'local',
+      storage: cloudResult ? 'cloudinary' : 'local',
     };
   } catch (error) {
     console.error('[Image Upload from Buffer Error]', error);

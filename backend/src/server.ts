@@ -6,6 +6,7 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || 'localhost';
 
 let server: ReturnType<typeof app.listen> | null = null;
+let isShuttingDown = false;
 
 async function bootstrap() {
   // Eagerly connect to MongoDB so a misconfigured URI fails at boot, not on the first request.
@@ -26,22 +27,39 @@ async function bootstrap() {
   });
 }
 
-bootstrap();
+bootstrap().catch((error) => {
+  console.error('Failed to bootstrap server:', error);
+  process.exit(1);
+});
 
-const gracefulShutdown = async () => {
-  console.log('Gracefully shutting down...');
+const gracefulShutdown = async (signal?: string) => {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+  console.log(`Gracefully shutting down...${signal ? ` (${signal})` : ''}`);
+
   if (server) {
-    server.close(() => {
-      console.log('HTTP server closed');
+    await new Promise<void>((resolve) => {
+      server?.close(() => {
+        console.log('HTTP server closed');
+        resolve();
+      });
     });
   }
+
   await MongoConnectionManager.getInstance().disconnect();
   console.log('Database disconnected');
   process.exit(0);
 };
 
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+process.on('SIGTERM', () => {
+  void gracefulShutdown('SIGTERM');
+});
+process.on('SIGINT', () => {
+  void gracefulShutdown('SIGINT');
+});
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);

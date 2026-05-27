@@ -16,8 +16,19 @@ async function main() {
   const adminEmail = "admin@beemadiary.com";
   const agentEmail = "agent@test.com";
   const clientEmail = "john@example.com";
-  const passwordHash = await bcrypt.hash("Admin@123456", 10);
-  const agentPasswordHash = await bcrypt.hash("Agent@123456", 10);
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  const agentPassword = process.env.SEED_AGENT_PASSWORD;
+
+  if (!adminPassword) {
+    throw new Error("SEED_ADMIN_PASSWORD is required");
+  }
+
+  if (!agentPassword) {
+    throw new Error("SEED_AGENT_PASSWORD is required");
+  }
+
+  const passwordHash = await bcrypt.hash(adminPassword, 10);
+  const agentPasswordHash = await bcrypt.hash(agentPassword, 10);
 
   const companyEmail = "beemadiary@company.local";
   const existingCompany = await prisma.company.findUnique({ where: { email: companyEmail } });
@@ -103,9 +114,6 @@ async function main() {
   console.log("- Agent:", agent.email);
   console.log("- Client:", client.email);
   console.log("- Policy:", policy.policy_number);
-  console.log("Login credentials:");
-  console.log("Admin -> admin@beemadiary.com / Admin@123456");
-  console.log("Agent -> agent@test.com / Agent@123456");
 }
 
 main()

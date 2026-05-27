@@ -17,6 +17,7 @@ import imageHandler from './utils/imageHandler';
 import dashboardRoutes from './routes/dashboard.routes';
 import authRoutes from './routes/auth.routes';
 import uploadRoutes from './routes/upload.routes';
+import imagesRoutes from './routes/images.routes';
 import adminRoutes from './routes/admin.routes';
 import notesRoutes from './routes/notes.routes';
 import calendarRoutes from './routes/calendar.routes';
@@ -31,6 +32,7 @@ import dashboardLegacyRoutes from './routes/dashboard.routes.js';
 import agentNotificationRoutes from './routes/agentNotification.routes';
 import swaggerOptions from './docs/swagger-complete';
 import { globalErrorHandler } from './middleware/errors/global-error-handler';
+const logger = require('./utils/logger');
 
 // JS (CommonJS) routes that work with the actual admin/agent DB tables
 const jsAuthRoutes = require('./routes/auth.routes.js');
@@ -62,7 +64,7 @@ app.use(sanitizeRequest);
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
-console.log('[INFO] Swagger API Documentation available at /api-docs');
+logger.info('Swagger API Documentation available at /api-docs');
 
 // Health Check Route
 app.get('/health', (_req: Request, res: Response) => {
@@ -86,6 +88,7 @@ app.use('/api', jsAuthRoutes);
 app.use('/api/admin', adminCompatRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/images', imagesRoutes);
 app.use('/api/user-panel', csrfProtection, dashboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', notesRoutes);

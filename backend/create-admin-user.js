@@ -13,17 +13,25 @@ async function hashPassword(password) {
 
 async function createAdmin() {
   try {
-    // Read admin credentials from environment with sensible fallbacks
-    const email = process.env.ADMIN_EMAIL || 'admin@beemadiary.com';
-    const password = process.env.ADMIN_PASSWORD || 'Admin@123456';  // STRONG PASSWORD
+    // Read admin credentials from environment only. Do not ship defaults.
+    const email = process.env.ADMIN_EMAIL;
+    const password = process.env.ADMIN_PASSWORD;
+
+    if (!email || !password) {
+      throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD are required in the environment');
+    }
 
     // Build MongoDB connection URI using same env vars as the app
-    const dbName = process.env.MONGODB_DATABASE || process.env.DB_NAME || 'beemadiary';
-    const host = process.env.MONGODB_HOST || 'localhost';
-    const port = process.env.MONGODB_PORT || '27017';
+    const dbName = process.env.MONGODB_DATABASE || process.env.DB_NAME;
+    const host = process.env.MONGODB_HOST;
+    const port = process.env.MONGODB_PORT;
     const username = process.env.MONGODB_USERNAME || process.env.DB_USER || '';
     const passwordEnv = process.env.MONGODB_PASSWORD || process.env.DB_PASSWORD || '';
     const authSource = process.env.MONGODB_AUTH_SOURCE || 'admin';
+
+    if (!dbName || !host || !port) {
+      throw new Error('MONGODB_DATABASE, MONGODB_HOST, and MONGODB_PORT are required in the environment');
+    }
 
     const credentials = username ? `${encodeURIComponent(username)}:${encodeURIComponent(passwordEnv)}@` : '';
     const uri = process.env.MONGODB_URI || `mongodb://${credentials}${host}:${port}/${dbName}${username ? `?authSource=${authSource}` : ''}`;
@@ -69,7 +77,6 @@ async function createAdmin() {
       console.log('\n✅ Admin password reset successfully!\n');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('📧 Email:    ' + email);
-      console.log('🔑 Password: ' + password);
       console.log('👤 Role:     SUPER_ADMIN');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     } else {
@@ -78,7 +85,6 @@ async function createAdmin() {
       console.log('\n✅ Admin created successfully!\n');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('📧 Email:    ' + email);
-      console.log('🔑 Password: ' + password);
       console.log('👤 Role:     SUPER_ADMIN');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     }
