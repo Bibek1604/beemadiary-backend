@@ -23,6 +23,12 @@ const agentSelect = {
   _count: { select: { clients: true } },
 };
 
+const console = {
+  log() {},
+  error() {},
+  warn() {},
+};
+
 const serializeAdmin = (admin) => ({
   id: admin.id,
   username: admin.username,
@@ -108,12 +114,7 @@ router.get("/users", async (_req, res) => {
 
     return res.status(200).json(ApiResponse.success("Users retrieved successfully", users));
   } catch (error) {
-    console.error("❌ ERROR retrieving users:", {
-      message: error.message,
-      code: error.code,
-      timestamp: new Date().toISOString()
-    });
-    return res.status(500).json(ApiResponse.error("Unable to fetch user list", "There was a problem retrieving the user list. Please try again."));
+    return res.status(500).json(ApiResponse.error("Unable to fetch user list"));
   }
 });
 
@@ -131,12 +132,7 @@ router.get("/users/:id", async (req, res) => {
 
     return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
   } catch (error) {
-    console.error("❌ ERROR retrieving user:", {
-      message: error.message,
-      code: error.code,
-      timestamp: new Date().toISOString()
-    });
-    return res.status(500).json(ApiResponse.error("Unable to fetch user details", "There was a problem fetching the user information. Please try again."));
+    return res.status(500).json(ApiResponse.error("Unable to fetch user details"));
   }
 });
 
@@ -157,13 +153,7 @@ router.get("/users/:id", async (req, res) => {
  *           schema:
  *             type: object
  *             required:
- *               - email
- *               - password
- *             properties:
- *               role:
- *                 type: string
- *                 enum: [ADMIN, AGENT, CLIENT]
- *                 default: AGENT
+    });
  *               email:
  *                 type: string
  *                 format: email
@@ -230,12 +220,6 @@ router.post("/users", async (req, res) => {
           data: {
             first_name: normalizeText(req.body.first_name),
             last_name: normalizeText(req.body.last_name),
-            email: normalizeText(req.body.email),
-            phone: normalizeText(req.body.phone_number),
-            address: normalizeText(req.body.address, ""),
-            password_hash: await bcrypt.hash(password, 10),
-            status: normalizeStatus(req.body.is_active),
-            agent_id: agentId,
           },
         });
         return res.status(201).json(ApiResponse.success("Client created successfully", serializeClient(client)));
@@ -271,19 +255,12 @@ router.post("/users", async (req, res) => {
       throw err;
     }
   } catch (error) {
-    // Log exact error details in terminal for debugging
-    console.error("❌ ERROR creating user:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      meta: error.meta,
-      timestamp: new Date().toISOString()
-    });
+    // Intentionally avoid logging exception payloads here.
 
     if (error.code === 'P2025') {
-      return res.status(400).json(ApiResponse.error("Invalid reference", "The referenced company or agent does not exist. Please select a valid option."));
+      return res.status(400).json(ApiResponse.error("Invalid reference"));
     }
-    return res.status(500).json(ApiResponse.error("Could not create user", "There was a problem creating the user account. Please check your information and try again."));
+    return res.status(500).json(ApiResponse.error("Could not create user"));
   }
 });
 
@@ -365,19 +342,12 @@ router.patch("/users/:id", async (req, res) => {
 
     return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
   } catch (error) {
-    // Log exact error details in terminal for debugging
-    console.error("❌ ERROR updating user:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      meta: error.meta,
-      timestamp: new Date().toISOString()
-    });
+    // Intentionally avoid logging exception payloads here.
 
     if (error.code === 'P2025') {
-      return res.status(400).json(ApiResponse.error("Invalid reference", "The referenced company or agent does not exist. Please select a valid option."));
+      return res.status(400).json(ApiResponse.error("Invalid reference"));
     }
-    return res.status(500).json(ApiResponse.error("Could not update user", "There was a problem updating the user account. Please check your information and try again."));
+    return res.status(500).json(ApiResponse.error("Could not update user"));
   }
 });
 
@@ -404,13 +374,7 @@ router.delete("/users/:id", async (req, res) => {
 
     return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
   } catch (error) {
-    console.error("❌ ERROR deleting user:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      timestamp: new Date().toISOString()
-    });
-    return res.status(500).json(ApiResponse.error("Could not delete user", "There was a problem deleting the user account. Please try again."));
+    return res.status(500).json(ApiResponse.error("Could not delete user"));
   }
 });
 
@@ -419,12 +383,7 @@ router.get("/companies", async (_req, res) => {
     const companies = await prisma.company.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } });
     return res.status(200).json(ApiResponse.success("Companies retrieved successfully", companies.map(serializeCompany)));
   } catch (error) {
-    console.error("❌ ERROR retrieving companies:", {
-      message: error.message,
-      code: error.code,
-      timestamp: new Date().toISOString()
-    });
-    return res.status(500).json(ApiResponse.error("Unable to fetch companies", "There was a problem retrieving the company list. Please try again."));
+    return res.status(500).json(ApiResponse.error("Unable to fetch companies"));
   }
 });
 
@@ -434,12 +393,7 @@ router.get("/companies/:id", async (req, res) => {
     if (!company || company.deleted_at) return res.status(404).json(ApiResponse.error("Company not found", "The company you are looking for does not exist or has been deleted."));
     return res.status(200).json(ApiResponse.success("Company retrieved successfully", serializeCompany(company)));
   } catch (error) {
-    console.error("❌ ERROR retrieving company:", {
-      message: error.message,
-      code: error.code,
-      timestamp: new Date().toISOString()
-    });
-    return res.status(500).json(ApiResponse.error("Unable to fetch company", "There was a problem fetching the company information. Please try again."));
+    return res.status(500).json(ApiResponse.error("Unable to fetch company"));
   }
 });
 
@@ -461,19 +415,12 @@ router.patch("/companies/:id", async (req, res) => {
 
     return res.status(200).json(ApiResponse.success("Company updated successfully", serializeCompany(updated)));
   } catch (error) {
-    console.error("❌ ERROR updating company:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      meta: error.meta,
-      timestamp: new Date().toISOString()
-    });
     if (error.code === 'P2002') {
       const field = error.meta?.target?.[0] || 'field';
       const fieldLabel = field === 'email' ? 'Email' : field === 'phone_number' ? 'Phone number' : field === 'name' ? 'Name' : field;
       return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
     }
-    return res.status(500).json(ApiResponse.error("Could not update company", "There was a problem updating the company information. Please check your details and try again."));
+    return res.status(500).json(ApiResponse.error("Could not update company"));
   }
 });
 
@@ -485,13 +432,7 @@ router.delete("/companies/:id", async (req, res) => {
     await prisma.company.update({ where: { id: req.params.id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
     return res.status(200).json(ApiResponse.success("Company deleted successfully", { id: req.params.id }));
   } catch (error) {
-    console.error("❌ ERROR deleting company:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack,
-      timestamp: new Date().toISOString()
-    });
-    return res.status(500).json(ApiResponse.error("Could not delete company", "There was a problem deleting the company. Please try again."));
+    return res.status(500).json(ApiResponse.error("Could not delete company"));
   }
 });
 

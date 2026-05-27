@@ -1,6 +1,6 @@
 export const CONSTANTS = {
   // JWT
-  JWT_SECRET: process.env.JWT_SECRET || 'your-secret-key',
+  JWT_SECRET: process.env.JWT_SECRET || '',
   JWT_EXPIRY: process.env.JWT_EXPIRY || '7d',
 
   // Business Logic

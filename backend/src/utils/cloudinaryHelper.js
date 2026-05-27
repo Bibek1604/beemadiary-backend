@@ -1,4 +1,8 @@
 const cloudinary = require('cloudinary').v2;
+const fs = require('fs');
+const path = require('path');
+const sharp = require('sharp');
+const crypto = require('crypto');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -15,27 +19,53 @@ cloudinary.config({
  * @returns {Promise<{public_id, secure_url, url, ...}>}
  */
 exports.uploadToCloudinary = async (fileBuffer, folder = 'agent-profiles', publicId = null) => {
-  return new Promise((resolve, reject) => {
-    const uploadStream = cloudinary.uploader.upload_stream(
-      {
-        folder: folder,
-        resource_type: 'auto',
-        public_id: publicId,
-        overwrite: publicId ? true : false, // Overwrite if public_id provided
-        quality: 'auto',
-        fetch_format: 'auto',
-      },
-      (error, result) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(result);
-        }
-      }
-    );
+  try {
+    // Create local backup directory
+    const uploadsRoot = path.join(process.cwd(), 'uploads');
+    const backupDir = path.join(uploadsRoot, folder);
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
-    uploadStream.end(fileBuffer);
-  });
+    // Convert to WEBP optimized buffer
+    let processedBuffer = fileBuffer;
+    try {
+      processedBuffer = await sharp(fileBuffer).webp({ quality: 80 }).toBuffer();
+    } catch (procErr) {
+      // fallback to original buffer
+      processedBuffer = fileBuffer;
+    }
+
+    // Save local backup
+    const uniqueName = `${folder}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}.webp`;
+    const localPath = path.join(backupDir, uniqueName);
+    fs.writeFileSync(localPath, processedBuffer);
+
+    // Upload to Cloudinary
+    return await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: folder,
+          resource_type: 'auto',
+          public_id: publicId,
+          overwrite: publicId ? true : false,
+          quality: 'auto',
+          fetch_format: 'auto',
+        },
+        (error, result) => {
+          if (error) {
+            reject(error);
+          } else {
+            // attach localPath for callers if needed
+            result.localPath = localPath;
+            resolve(result);
+          }
+        }
+      );
+
+      uploadStream.end(processedBuffer);
+    });
+  } catch (err) {
+    return Promise.reject(err);
+  }
 };
 
 /**

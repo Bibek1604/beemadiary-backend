@@ -4,6 +4,15 @@ import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
 import authService from '../services/auth.service';
 import { asyncHandler } from '../middleware/asyncHandler';
+const env = require('../config/env');
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: env.COOKIE_SECURE,
+  sameSite: env.COOKIE_SAME_SITE || 'strict',
+  domain: env.COOKIE_DOMAIN || undefined,
+  path: '/',
+};
 
 /**
  * Authentication Controller
@@ -57,16 +66,12 @@ export class AuthController {
 
     // Set secure cookies
     res.cookie('accessToken', result.tokens.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      ...cookieOptions,
       maxAge: 15 * 60 * 1000, // 15 minutes
     });
 
     res.cookie('refreshToken', result.tokens.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      ...cookieOptions,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
@@ -93,8 +98,8 @@ export class AuthController {
     await authService.logout(req.user.id, session_id, ipAddress, userAgent);
 
     // Clear cookies
-    res.clearCookie('accessToken');
-    res.clearCookie('refreshToken');
+    res.clearCookie('accessToken', cookieOptions);
+    res.clearCookie('refreshToken', cookieOptions);
 
     return res.status(CONSTANTS.STATUS_CODES.OK).json(
       ResponseHandler.success('Logout successful')
@@ -107,20 +112,33 @@ export class AuthController {
    */
   refreshToken = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { refreshToken } = req.body;
+    const refreshTokenFromCookie = (req as any).cookies?.refreshToken;
     const ipAddress = req.ip || 'unknown';
     const userAgent = req.get('user-agent') || 'unknown';
 
-    if (!refreshToken) {
+    const tokenToUse = refreshToken || refreshTokenFromCookie;
+
+    if (!tokenToUse) {
       return res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
         ResponseHandler.unauthorized('Refresh token required')
       );
     }
 
     const tokens = await authService.refreshToken(
-      refreshToken,
+      tokenToUse,
       ipAddress,
       userAgent
     );
+
+    res.cookie('accessToken', tokens.accessToken, {
+      ...cookieOptions,
+      maxAge: 15 * 60 * 1000,
+    });
+
+    res.cookie('refreshToken', tokens.refreshToken, {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
 
     return res.status(CONSTANTS.STATUS_CODES.OK).json(
       ResponseHandler.success('Token refreshed', { tokens })
@@ -184,8 +202,8 @@ export class AuthController {
     await authService.logoutAllDevices(req.user.id, ipAddress, userAgent);
 
     // Clear cookies
-    res.clearCookie('accessToken');
-    res.clearCookie('refreshToken');
+    res.clearCookie('accessToken', cookieOptions);
+    res.clearCookie('refreshToken', cookieOptions);
 
     return res.status(CONSTANTS.STATUS_CODES.OK).json(
       ResponseHandler.success('Logged out from all devices')

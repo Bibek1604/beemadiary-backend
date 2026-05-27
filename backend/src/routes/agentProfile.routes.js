@@ -5,6 +5,11 @@ const ApiResponse = require("../utils/apiResponse");
 const multer = require("multer");
 const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryHelper");
 const { prisma } = require("../config/db");
+const console = {
+  log() {},
+  error() {},
+  warn() {},
+};
 
 // Configure Multer for image upload
 const storage = multer.memoryStorage();
@@ -49,20 +54,15 @@ router.get("/agent/profile", async (req, res) => {
       );
     }
 
-    console.log('📥 [Database] Full profile from DB:', JSON.stringify(profile, null, 2));
-
     // Filter out null/undefined values for cleaner response
     const cleanedProfile = Object.fromEntries(
       Object.entries(profile).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
 
-    console.log('📤 [Response] Cleaned profile:', JSON.stringify(cleanedProfile, null, 2));
-
     res.status(200).json(
       ApiResponse.success("Agent profile retrieved successfully", cleanedProfile)
     );
   } catch (error) {
-    console.error('❌ [Get Profile] Error:', error.message);
     res.status(500).json(
       ApiResponse.error("Failed to retrieve agent profile", null, 500)
     );
@@ -135,28 +135,20 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
 
     // Handle image upload if included in request
     if (req.file) {
-      console.log('📸 [Upload] Processing image:', req.file.originalname, `(${(req.file.size / 1024 / 1024).toFixed(2)}MB)`);
-
       try {
-        console.log('☁️ [Cloudinary] Uploading to Cloudinary...');
         const cloudinaryResult = await uploadToCloudinary(
           req.file.buffer,
           `lic-insurance/agent-profiles/${userId}`,
           `agent-profile-${userId}`
         );
-        console.log('✅ [Cloudinary] Upload successful:', cloudinaryResult.public_id);
         updateData.profile_picture = cloudinaryResult.secure_url;
         updateData.profile_picture_public_id = cloudinaryResult.public_id;
       } catch (cloudinaryError) {
-        console.error('❌ [Cloudinary] Upload failed:', cloudinaryError.message);
-        console.error('Cloudinary error details:', cloudinaryError);
         return res.status(400).json(
-          ApiResponse.error(`Image upload failed: ${cloudinaryError.message}`, null, 400)
+          ApiResponse.error("Image upload failed", null, 400)
         );
       }
     }
-
-    console.log('💾 [Database] Updating with data:', JSON.stringify(updateData, null, 2));
 
     // Check if agent exists
     const existingAgent = await prisma.agent.findUnique({
@@ -172,30 +164,22 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
       });
     } else {
       // Agent doesn't exist - create (this shouldn't happen in normal flow)
-      console.log('⚠️ [Database] Agent not found, creating new record');
       return res.status(400).json(
         ApiResponse.error("Agent profile not found. Please contact support.", null, 400)
       );
     }
-
-    console.log('💾 [Database] Saved profile:', JSON.stringify(savedProfile, null, 2));
 
     // Filter out null values for response
     const cleanedResponse = Object.fromEntries(
       Object.entries(savedProfile).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
 
-    console.log('📤 [Response] Sending back:', JSON.stringify(cleanedResponse, null, 2));
-
     res.status(200).json(
       ApiResponse.success("Agent profile updated successfully", cleanedResponse)
     );
   } catch (error) {
-    console.error('❌ [Save Profile] Error:', error.message);
-    console.error('Error Stack:', error.stack);
-    console.error('Full Error:', JSON.stringify(error, null, 2));
     res.status(500).json(
-      ApiResponse.error(`Failed to update agent profile: ${error.message}`, null, 500)
+      ApiResponse.error("Failed to update agent profile", null, 500)
     );
   }
 });
@@ -307,10 +291,7 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
       );
     }
 
-    console.log('📸 [Upload] Processing image:', req.file.originalname, `(${(req.file.size / 1024 / 1024).toFixed(2)}MB)`);
-
     // Upload to Cloudinary
-    console.log('☁️ [Cloudinary] Uploading to Cloudinary...');
     let cloudinaryResult;
     try {
       cloudinaryResult = await uploadToCloudinary(
@@ -318,11 +299,8 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
         `lic-insurance/agent-profiles/${userId}`,
         `agent-profile-${userId}`
       );
-      console.log('✅ [Cloudinary] Upload successful:', cloudinaryResult.public_id);
     } catch (cloudinaryError) {
-      console.error('❌ [Cloudinary] Upload failed:', cloudinaryError.message);
-      console.error('Full error:', cloudinaryError);
-      throw new Error(`Cloudinary upload failed: ${cloudinaryError.message}`);
+      throw new Error('Cloudinary upload failed');
     }
 
     // Store public_id and url in database
@@ -339,8 +317,6 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
       }
     });
 
-    console.log('💾 [Database] Image saved:', agent.profile_picture_public_id);
-
     res.status(200).json(
       ApiResponse.success("Image uploaded successfully", {
         image_url: cloudinaryResult.secure_url,
@@ -351,13 +327,8 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
       })
     );
   } catch (error) {
-    console.error('❌ [Upload] Error:', error.message);
     res.status(500).json(
-      ApiResponse.error(
-        `Failed to upload image: ${error.message}`,
-        null,
-        500
-      )
+      ApiResponse.error("Failed to upload image", null, 500)
     );
   }
 });
@@ -374,8 +345,6 @@ router.delete("/agent/profile/profile-image", async (req, res) => {
       return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
     }
 
-    console.log('🗑️ [Delete] Deleting image for user:', userId);
-
     // Get public_id from database
     const agent = await prisma.agent.findUnique({ where: { id: userId } });
     if (!agent?.profile_picture_public_id) {
@@ -384,7 +353,6 @@ router.delete("/agent/profile/profile-image", async (req, res) => {
 
     // Delete from Cloudinary
     const deleteResult = await deleteFromCloudinary(agent.profile_picture_public_id);
-    console.log('✅ [Cloudinary] Image deleted:', deleteResult.result);
 
     // Update database to remove image references
     await prisma.agent.update({
@@ -395,19 +363,12 @@ router.delete("/agent/profile/profile-image", async (req, res) => {
       }
     });
 
-    console.log('💾 [Database] Image reference removed');
-
     res.status(200).json(
       ApiResponse.success("Image deleted successfully", null)
     );
   } catch (error) {
-    console.error('❌ [Delete] Error:', error.message);
     res.status(500).json(
-      ApiResponse.error(
-        `Failed to delete image: ${error.message}`,
-        null,
-        500
-      )
+      ApiResponse.error("Failed to delete image", null, 500)
     );
   }
 });

@@ -4,6 +4,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'xss-clean';
 import { CONSTANTS } from '../config/constants';
+const logger = require('../utils/logger');
 
 /**
  * Apply helmet security headers
@@ -25,7 +26,10 @@ export const securityHeaders = helmet({
  */
 export const corsConfig = cors({
   origin: function (origin, callback) {
-    const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175').split(',').map(o => o.trim());
+    const allowedOrigins = (process.env.CORS_ORIGIN || process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
 
     // Allow requests with no origin (like mobile apps, curl, postman)
     if (!origin) return callback(null, true);
@@ -40,11 +44,12 @@ export const corsConfig = cors({
       return callback(null, true);
     }
 
-    // If not allowed, still callback with true for development, false for production
     if (process.env.NODE_ENV === 'development') {
+      logger.warn('[CORS] Allowing development origin not present in allowlist', { origin });
       return callback(null, true);
     }
 
+    logger.warn('[CORS] Blocked origin', { origin, allowedOrigins });
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -87,7 +92,7 @@ export const authLimiter = rateLimit({
 export const xssProtection = mongoSanitize({
   replaceWith: '_',
   onSanitize: ({ req, key }: any) => {
-    console.warn(`[XSS WARNING] Potential XSS attack detected in key: ${key}`);
+    logger.warn('[XSS WARNING] Potential XSS attack detected', { key, path: req?.path, method: req?.method });
   },
 });
 
@@ -113,7 +118,9 @@ export const apiSecurityHeaders = (req: Request, res: Response, next: NextFuncti
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   res.setHeader('Content-Security-Policy', "default-src 'self'");
   next();
 };
@@ -126,7 +133,14 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
 
   res.on('finish', () => {
     const duration = Date.now() - start;
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} - ${duration}ms`);
+    logger.info('[HTTP]', {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: duration,
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+    });
   });
 
   next();

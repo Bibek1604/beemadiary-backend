@@ -1,0 +1,48 @@
+## Nginx sample for serving uploads as hosted images and proxying API
+# Replace `example.com` and file paths with your production values.
+
+server {
+  listen 80;
+  server_name example.com www.example.com;
+
+  # Redirect HTTP to HTTPS (if TLS is enabled later)
+  return 301 https://$host$request_uri;
+}
+
+server {
+  listen 443 ssl http2;
+  server_name example.com www.example.com;
+
+  # TLS certs (use Let's Encrypt or your certs)
+  ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+  include /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+  # Serve uploaded files directly from disk for speed
+  # Point this to the absolute path of the backend uploads folder
+  location /uploads/ {
+    alias /var/www/dashboard/uploads/;   # <-- update to your app's uploads path
+    access_log off;
+    expires 30d;
+    add_header Cache-Control "public";
+    try_files $uri $uri/ =404;
+  }
+
+  # If your app returns image URLs under /api/images/, proxy those to backend
+  location /api/ {
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_pass http://127.0.0.1:3000;  # backend listening address
+    proxy_read_timeout 90;
+    proxy_buffering off;
+  }
+
+  # Serve SPA static files (if deployed together)
+  location / {
+    root /var/www/dashboard/dist; # update to your built frontend path
+    try_files $uri $uri/ /index.html;
+  }
+}

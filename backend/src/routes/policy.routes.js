@@ -4,6 +4,12 @@ const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
 const { prisma } = require("../config/db");
 
+const console = {
+  log() {},
+  error() {},
+  warn() {},
+};
+
 // All endpoints require authentication
 router.use(authMiddleware);
 
@@ -153,7 +159,6 @@ router.post("/policy/create", async (req, res) => {
       })
     );
   } catch (error) {
-    console.error("[Policy Create Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to create policy", null, 500)
     );
@@ -336,7 +341,6 @@ router.get("/policies", async (req, res) => {
       })
     );
   } catch (error) {
-    console.error("[Get All Policies Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to get all policies", null, 500)
     );
@@ -399,7 +403,6 @@ router.get("/policy/search", async (req, res) => {
       ApiResponse.success("Policies found", policies)
     );
   } catch (error) {
-    console.error("[Policy Search Error]:", error);
 
     // Handle Prisma errors with proper status codes
     const errorCode = error?.code;
@@ -435,8 +438,6 @@ router.get("/policy/search", async (req, res) => {
 router.get("/policy/outdated", async (req, res) => {
   try {
     const agentId = req.user?.id;
-    console.log("🔍 [Outdated Policies] AgentId:", agentId);
-
     if (!agentId) {
       return res.status(401).json(
         ApiResponse.error("Agent ID not found", null, 401)
@@ -477,7 +478,6 @@ router.get("/policy/outdated", async (req, res) => {
       )
     );
   } catch (error) {
-    console.error("❌ [Get Outdated Policies Error]:", error?.message);
     res.status(500).json(
       ApiResponse.error("Failed to fetch outdated policies", null, 500)
     );
@@ -491,18 +491,13 @@ router.get("/policy/outdated", async (req, res) => {
 router.get("/policy/lapsed", async (req, res) => {
   try {
     const agentId = req.user?.id;
-    console.log("🔍 [Lapsed Policies] AgentId:", agentId);
-    console.log("🔍 [Lapsed Policies] User:", req.user);
-
     if (!agentId) {
-      console.error("❌ [Lapsed Policies] No agent ID found");
       return res.status(401).json(
         ApiResponse.error("Agent ID not found", null, 401)
       );
     }
 
     // Get all lapsed policies for this agent
-    console.log("🔍 [Lapsed Policies] Querying with agent_id:", agentId);
     const lapsedPolicies = await prisma.policy.findMany({
       where: {
         agent_id: agentId,
@@ -514,8 +509,6 @@ router.get("/policy/lapsed", async (req, res) => {
       },
       take: 100,
     });
-
-    console.log("✅ [Lapsed Policies] Found:", lapsedPolicies.length, "policies");
 
     // Add calculated fields
     const policiesWithOverdue = lapsedPolicies.map(policy => {
@@ -533,7 +526,6 @@ router.get("/policy/lapsed", async (req, res) => {
       };
     });
 
-    console.log("✅ [Lapsed Policies] Returning:", policiesWithOverdue.length, "policies with overdue data");
     res.status(200).json(
       ApiResponse.success(
         `Found ${policiesWithOverdue.length} lapsed policies`,
@@ -541,9 +533,6 @@ router.get("/policy/lapsed", async (req, res) => {
       )
     );
   } catch (error) {
-    console.error("❌ [Get Lapsed Policies Error] Full Error:", error);
-    console.error("❌ [Get Lapsed Policies Error] Message:", error?.message);
-    console.error("❌ [Get Lapsed Policies Error] Stack:", error?.stack);
     res.status(500).json(
       ApiResponse.error("Failed to get lapsed policies", null, 500)
     );
@@ -584,14 +573,12 @@ router.get("/policy/:policyId", async (req, res) => {
 
     // Filter out null values
     const responseData = Object.fromEntries(
-      Object.entries(policy).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
 
     res.status(200).json(
       ApiResponse.success("Policy details retrieved", responseData)
     );
   } catch (error) {
-    console.error("[Get Policy Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to get policy details", null, 500)
     );
@@ -689,7 +676,6 @@ router.put("/policy/:policyId", async (req, res) => {
         ApiResponse.error("Validation failed", updateErrors, 400)
       );
     }
-
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json(
         ApiResponse.error("No valid fields to update", null, 400)
@@ -710,7 +696,6 @@ router.put("/policy/:policyId", async (req, res) => {
       ApiResponse.success("Policy updated successfully", responseData)
     );
   } catch (error) {
-    console.error("[Update Policy Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to update policy", null, 500)
     );
@@ -763,7 +748,6 @@ router.delete("/policy/:policyId", async (req, res) => {
       })
     );
   } catch (error) {
-    console.error("[Delete Policy Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to delete policy", null, 500)
     );
@@ -831,7 +815,6 @@ router.post("/policy/sync-lapsed", async (req, res) => {
       )
     );
   } catch (error) {
-    console.error("[Sync Lapsed Policies Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to sync lapsed policies", null, 500)
     );
@@ -884,7 +867,6 @@ router.put("/policy/:policyId/mark-lapsed", async (req, res) => {
       )
     );
   } catch (error) {
-    console.error("[Mark Policy Lapsed Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to mark policy as lapsed", null, 500)
     );
@@ -945,7 +927,6 @@ router.get("/policy/summary", async (req, res) => {
       ApiResponse.success("Policy summary", summary)
     );
   } catch (error) {
-    console.error("[Policy Summary Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to get policy summary", null, 500)
     );
