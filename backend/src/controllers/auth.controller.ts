@@ -80,6 +80,14 @@ export class AuthController {
     );
   });
 
+  adminLogin = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    return this.login(req, res);
+  });
+
+  agentLogin = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+    return this.login(req, res);
+  });
+
   /**
    * Logout user
    * POST /api/auth/logout
@@ -307,3 +315,5 @@ export class AuthController {
 }
 
 export const authController = new AuthController();
+export const adminLogin = authController.adminLogin;
+export const agentLogin = authController.agentLogin;

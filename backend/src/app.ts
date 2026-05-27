@@ -35,8 +35,10 @@ import { globalErrorHandler } from './middleware/errors/global-error-handler';
 const logger = require('./utils/logger');
 
 // JS (CommonJS) routes that work with the actual admin/agent DB tables
-const jsAuthRoutes = require('./routes/auth.routes.js');
-const adminCompatRoutes = require('./routes/admin.compat.routes.js');
+const jsAuthRoutesModule = require('./routes/auth.routes.js');
+const adminCompatRoutesModule = require('./routes/admin.compat.routes.js');
+const jsAuthRoutes = jsAuthRoutesModule.default || jsAuthRoutesModule;
+const adminCompatRoutes = adminCompatRoutesModule.default || adminCompatRoutesModule;
 
 const app: Express = express();
 
