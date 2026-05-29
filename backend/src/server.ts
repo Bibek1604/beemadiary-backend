@@ -9,7 +9,6 @@ let server: ReturnType<typeof app.listen> | null = null;
 let isShuttingDown = false;
 
 async function bootstrap() {
-  // Eagerly connect to MongoDB so a misconfigured URI fails at boot, not on the first request.
   try {
     const db = await MongoConnectionManager.getInstance().connect();
     console.log(`MongoDB connected (database: ${db.databaseName})`);
@@ -33,10 +32,7 @@ bootstrap().catch((error) => {
 });
 
 const gracefulShutdown = async (signal?: string) => {
-  if (isShuttingDown) {
-    return;
-  }
-
+  if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`Gracefully shutting down...${signal ? ` (${signal})` : ''}`);
 
@@ -54,18 +50,12 @@ const gracefulShutdown = async (signal?: string) => {
   process.exit(0);
 };
 
-process.on('SIGTERM', () => {
-  void gracefulShutdown('SIGTERM');
-});
-process.on('SIGINT', () => {
-  void gracefulShutdown('SIGINT');
-});
-
+process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
   process.exit(1);
 });
-
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
   process.exit(1);
