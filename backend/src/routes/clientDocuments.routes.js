@@ -38,6 +38,18 @@ router.use(authMiddleware);
  * Required: client_id
  * Files: profile_picture, supporting_documents[], photos[]
  */
+/**
+ * @swagger
+ * /api/client/documents:
+ *   post:
+ *     summary: Upload client documents
+ *     tags: [Client Documents]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Documents uploaded successfully
+ */
 router.post(
   "/client/documents",
   upload.fields([

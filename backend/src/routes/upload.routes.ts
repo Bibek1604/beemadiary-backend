@@ -20,6 +20,18 @@ const router = Router();
  * POST /api/upload/profile-picture
  * Upload profile picture for authenticated user
  */
+/**
+ * @swagger
+ * /api/upload/profile-picture:
+ *   post:
+ *     summary: Upload profile picture
+ *     tags: [Upload]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201:
+ *         description: Profile picture uploaded successfully
+ */
 router.post(
   '/profile-picture',
   verifyToken,
@@ -70,6 +82,18 @@ router.post(
  * POST /api/upload/document
  * Upload document for authenticated user
  */
+/**
+ * @swagger
+ * /api/upload/document:
+ *   post:
+ *     summary: Upload document
+ *     tags: [Upload]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201:
+ *         description: Document uploaded successfully
+ */
 router.post(
   '/document',
   verifyToken,
@@ -111,6 +135,27 @@ router.post(
 /**
  * GET /api/uploads/:folder/:filename
  * Serve uploaded files from local storage
+ */
+/**
+ * @swagger
+ * /api/upload/{folder}/{filename}:
+ *   get:
+ *     summary: Get uploaded file
+ *     tags: [Upload]
+ *     parameters:
+ *       - in: path
+ *         name: folder
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: filename
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: File streamed successfully
  */
 router.get(
   '/:folder/:filename',
@@ -168,6 +213,29 @@ router.get(
  * DELETE /api/upload/:filename
  * Delete uploaded file (authenticated users only)
  */
+/**
+ * @swagger
+ * /api/upload/{folder}/{filename}:
+ *   delete:
+ *     summary: Delete uploaded file
+ *     tags: [Upload]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: folder
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: filename
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: File deleted successfully
+ */
 router.delete(
   '/:folder/:filename',
   verifyToken,
@@ -205,6 +273,18 @@ router.delete(
 /**
  * POST /api/upload/bulk
  * Bulk upload multiple images
+ */
+/**
+ * @swagger
+ * /api/upload/bulk:
+ *   post:
+ *     summary: Bulk upload files
+ *     tags: [Upload]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201:
+ *         description: Bulk upload completed
  */
 router.post(
   '/bulk',
@@ -259,6 +339,18 @@ router.post(
 /**
  * POST /api/upload/from-url
  * Upload image from URL
+ */
+/**
+ * @swagger
+ * /api/upload/from-url:
+ *   post:
+ *     summary: Upload image from URL
+ *     tags: [Upload]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201:
+ *         description: Image uploaded from URL successfully
  */
 router.post(
   '/from-url',

@@ -33,6 +33,18 @@ router.use(authMiddleware);
  * GET /api/agent/profile
  * Get current agent's profile
  */
+/**
+ * @swagger
+ * /api/agent/profile:
+ *   get:
+ *     summary: Get agent profile
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Agent profile retrieved successfully
+ */
 router.get("/agent/profile", async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -72,6 +84,18 @@ router.get("/agent/profile", async (req, res) => {
 /**
  * POST /api/agent/profile
  * Create or update agent profile (with optional image upload)
+ */
+/**
+ * @swagger
+ * /api/agent/profile:
+ *   post:
+ *     summary: Create or update agent profile
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Agent profile updated successfully
  */
 router.post("/agent/profile", upload.single("image"), async (req, res) => {
   try {
@@ -188,6 +212,24 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
  * PUT /api/agent/profile/:id
  * Update specific profile fields
  */
+/**
+ * @swagger
+ * /api/agent/profile/{id}:
+ *   put:
+ *     summary: Update agent profile by id
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Agent profile updated successfully
+ */
 router.put("/agent/profile/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -215,6 +257,24 @@ router.put("/agent/profile/:id", async (req, res) => {
 /**
  * DELETE /api/agent/profile/:id
  * Delete or deactivate own agent profile (requires matching security PIN)
+ */
+/**
+ * @swagger
+ * /api/agent/profile/{id}:
+ *   delete:
+ *     summary: Delete agent profile by id
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Profile deleted / deactivated successfully
  */
 router.delete("/agent/profile/:id", async (req, res) => {
   try {
@@ -262,6 +322,18 @@ router.delete("/agent/profile/:id", async (req, res) => {
 /**
  * POST /api/agent/profile/upload-image
  * Upload agent profile image to Cloudinary
+ */
+/**
+ * @swagger
+ * /api/agent/profile/upload-image:
+ *   post:
+ *     summary: Upload agent profile image
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Image uploaded successfully
  */
 router.post("/agent/profile/upload-image", upload.single("image"), async (req, res) => {
   try {
@@ -336,6 +408,18 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
 /**
  * DELETE /api/agent/profile/profile-image
  * Delete agent profile image from Cloudinary
+ */
+/**
+ * @swagger
+ * /api/agent/profile/profile-image:
+ *   delete:
+ *     summary: Delete agent profile image
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Image deleted successfully
  */
 router.delete("/agent/profile/profile-image", async (req, res) => {
   try {

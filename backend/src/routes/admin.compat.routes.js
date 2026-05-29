@@ -153,7 +153,6 @@ router.get("/users/:id", async (req, res) => {
  *           schema:
  *             type: object
  *             required:
-    });
  *               email:
  *                 type: string
  *                 format: email

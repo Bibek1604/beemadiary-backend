@@ -12,6 +12,18 @@ router.use(authMiddleware);
  * Add bank details to a policy
  * Required: policy_id, bank_account, branch, premium_due_date, premium_paid
  */
+/**
+ * @swagger
+ * /api/policy/bank-details:
+ *   post:
+ *     summary: Add policy bank details
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Bank details added successfully
+ */
 router.post("/policy/bank-details", async (req, res) => {
   try {
     const agentId = req.user?.id;

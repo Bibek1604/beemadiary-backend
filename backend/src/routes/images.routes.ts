@@ -26,6 +26,27 @@ const streamLocalFile = (filePath: string, res: Response) => {
  * GET /api/images/:folder/:filename
  * Serve image by trying Cloudinary first, falling back to local backup
  */
+/**
+ * @swagger
+ * /api/images/{folder}/{filename}:
+ *   get:
+ *     summary: Get image
+ *     tags: [Images]
+ *     parameters:
+ *       - in: path
+ *         name: folder
+ *         required: true
+ *         schema:
+ *           type: string
+ *       - in: path
+ *         name: filename
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Image served successfully
+ */
 router.get('/:folder/:filename', async (req: Request, res: Response) => {
   const { folder, filename } = req.params;
   // basic validation

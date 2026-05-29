@@ -11,6 +11,24 @@ router.use(authMiddleware);
  * GET /api/diagnostic/client/:clientId
  * View complete client data with all details
  */
+/**
+ * @swagger
+ * /api/diagnostic/client/{clientId}:
+ *   get:
+ *     summary: Get diagnostic data for a client
+ *     tags: [Diagnostic]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: clientId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Client diagnostic data
+ */
 router.get("/diagnostic/client/:clientId", async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -107,6 +125,18 @@ router.get("/diagnostic/client/:clientId", async (req, res) => {
 /**
  * GET /api/diagnostic/agent/clients
  * View all clients and their policies for this agent
+ */
+/**
+ * @swagger
+ * /api/diagnostic/agent/clients:
+ *   get:
+ *     summary: Get diagnostic data for agent clients
+ *     tags: [Diagnostic]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Agent client diagnostic data
  */
 router.get("/diagnostic/agent/clients", async (req, res) => {
   try {

@@ -127,11 +127,41 @@ router.post(
   companyController.createCompany
 );
 
+/**
+ * @swagger
+ * /api/admin/companies:
+ *   get:
+ *     summary: List companies
+ *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Companies retrieved successfully
+ */
 router.get("/admin/companies", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), async (_req, res) => {
   const companies = await prisma.company.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } });
   return res.status(200).json(ApiResponse.success("Companies retrieved successfully", companies.map(serializeCompany)));
 });
 
+/**
+ * @swagger
+ * /api/admin/companies/{id}:
+ *   get:
+ *     summary: Get company by id
+ *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Company retrieved successfully
+ */
 router.get("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), async (req, res) => {
   const company = await prisma.company.findUnique({ where: { id: req.params.id } });
   if (!company || company.deleted_at) {
@@ -140,6 +170,24 @@ router.get("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_AD
   return res.status(200).json(ApiResponse.success("Company retrieved successfully", serializeCompany(company)));
 });
 
+/**
+ * @swagger
+ * /api/admin/companies/{id}:
+ *   patch:
+ *     summary: Update company
+ *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Company updated successfully
+ */
 router.patch("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), upload.single("image"), async (req, res) => {
   const company = await prisma.company.findUnique({ where: { id: req.params.id } });
   if (!company || company.deleted_at) {
@@ -160,6 +208,24 @@ router.patch("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_
   return res.status(200).json(ApiResponse.success("Company updated successfully", serializeCompany(updated)));
 });
 
+/**
+ * @swagger
+ * /api/admin/companies/{id}:
+ *   delete:
+ *     summary: Delete company
+ *     tags: [Companies]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Company deleted successfully
+ */
 router.delete("/admin/companies/:id", authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]), async (req, res) => {
   const company = await prisma.company.findUnique({ where: { id: req.params.id } });
   if (!company || company.deleted_at) {

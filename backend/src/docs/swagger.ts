@@ -1091,7 +1091,7 @@ const swaggerOptions = {
       },
     ],
   },
-  apis: [],
+  apis: ["src/routes/**/*.ts", "src/routes/**/*.js"],
 };
 
 export default swaggerOptions;
