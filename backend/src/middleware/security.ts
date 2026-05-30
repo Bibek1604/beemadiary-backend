@@ -13,9 +13,11 @@ export const securityHeaders = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com"],
+      scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
       imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", "https://api.cloudinary.com"],
+      fontSrc: ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
     },
   },
   crossOriginEmbedderPolicy: false,
@@ -39,17 +41,13 @@ export const corsConfig = cors({
       return callback(null, true);
     }
 
-    // Allow localhost origins in development
+    // Allow localhost origins in development (but still validate)
     if (process.env.NODE_ENV === 'development' && origin?.startsWith('http://localhost')) {
       return callback(null, true);
     }
 
-    if (process.env.NODE_ENV === 'development') {
-      logger.warn('[CORS] Allowing development origin not present in allowlist', { origin });
-      return callback(null, true);
-    }
-
-    logger.warn('[CORS] Blocked origin', { origin, allowedOrigins });
+    // Even in development, enforce CORS - don't allow unvalidated origins
+    logger.warn('[CORS] BLOCKED non-allowlisted origin', { origin, allowedOrigins });
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],

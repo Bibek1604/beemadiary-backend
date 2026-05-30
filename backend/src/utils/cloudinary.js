@@ -17,8 +17,18 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Multer memory storage (ideal for buffer processing/streaming)
-const storage = multer.memoryStorage();
+// Multer disk storage (prevents memory exhaustion from large uploads)
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    const ext = path.extname(file.originalname);
+    const name = path.basename(file.originalname, ext);
+    cb(null, `${name}-${uniqueSuffix}${ext}`);
+  }
+});
 
 // File upload restrictions
 const upload = multer({
@@ -62,9 +72,12 @@ const uploadFile = async (file) => {
     // Fallback to local storage
     const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
     const filePath = path.join(uploadsDir, fileName);
-    
-    // Save file buffer to local disk
-    fs.writeFileSync(filePath, file.buffer);
+
+    // Save file buffer to local disk asynchronously
+    fs.promises.writeFile(filePath, file.buffer).catch((err) => {
+      const logger = require('./logger');
+      logger.error('Failed to write file to disk', err);
+    });
     return `/uploads/${fileName}`;
   }
 };
@@ -96,8 +109,11 @@ const uploadImage = async (file) => {
     // Fallback to local storage
     const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
     const filePath = path.join(uploadsDir, fileName);
-    
-    fs.writeFileSync(filePath, file.buffer);
+
+    fs.promises.writeFile(filePath, file.buffer).catch((err) => {
+      const logger = require('./logger');
+      logger.error('Failed to write image file to disk', err);
+    });
     return {
       url: `/uploads/${fileName}`,
       public_id: null

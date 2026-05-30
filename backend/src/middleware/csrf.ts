@@ -63,9 +63,9 @@ export const setCSRFToken = (req: Request, res: Response, next: NextFunction) =>
   // Generate new token
   const token = generateCSRFToken();
 
-  // Set in cookie (HttpOnly not set so client can read it)
+  // Set in cookie with HttpOnly protection (prevent XSS)
   res.cookie(CSRF_TOKEN_COOKIE, token, {
-    httpOnly: false, // Client needs to read for header
+    httpOnly: true, // PROTECTED: Client cannot read via JavaScript
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
@@ -77,7 +77,11 @@ export const setCSRFToken = (req: Request, res: Response, next: NextFunction) =>
   // Also attach to request for controller access
   (req as any).csrfToken = token;
 
-  next();
+  // Return token in response body for client to use in header
+  return res.status(200).json({
+    message: 'CSRF token generated',
+    csrfToken: token,
+  });
 };
 
 /**

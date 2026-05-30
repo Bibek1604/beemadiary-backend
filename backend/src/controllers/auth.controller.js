@@ -42,7 +42,7 @@ const agentLogin = asyncHandler(async (req, res) => {
 
   res.cookie('accessToken', result.token, {
     ...cookieOptions,
-    maxAge: 15 * 60 * 1000,
+    maxAge: 24 * 60 * 60 * 1000, // Match JWT_EXPIRES_IN (24h)
   });
 
   return res.status(200).json({

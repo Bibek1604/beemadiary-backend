@@ -10,6 +10,22 @@ if (!process.env.JWT_SECRET) {
 
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Validate critical environment variables in production
+if (isProduction) {
+  const required = [
+    'JWT_SECRET',
+    'MONGODB_URI',
+    'MONGODB_HOST',
+    'CLOUDINARY_CLOUD_NAME',
+  ];
+
+  for (const key of required) {
+    if (!process.env[key]) {
+      throw new Error(`🚨 CRITICAL: Environment variable "${key}" is required in production`);
+    }
+  }
+}
+
 const getProductionOrigins = () => {
   const raw = process.env.CORS_ORIGIN || process.env.CORS_ALLOWED_ORIGINS || '';
   const origins = raw

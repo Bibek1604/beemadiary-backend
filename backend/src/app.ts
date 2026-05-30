@@ -1,5 +1,6 @@
-import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import 'dotenv/config';
+import { v4 as uuidv4 } from 'uuid';
 import swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
 import {
@@ -45,6 +46,13 @@ const app: Express = express();
 // Initialize upload directories
 imageHandler.ensureUploadDirs();
 
+// Middleware - Request ID (MUST BE FIRST)
+app.use((req: any, res: Response, next: NextFunction) => {
+  req.id = uuidv4();
+  res.locals.requestId = req.id;
+  next();
+});
+
 // Middleware - Security & Body Parsing
 app.use(securityHeaders);
 app.use(corsConfig);
@@ -89,7 +97,8 @@ app.get('/api/csrf-token', setCSRFToken, (req: Request, res: Response) => {
 // API Routes - JS auth routes first (admin/agent login that works with actual DB tables)
 app.use('/api', jsAuthRoutes);
 app.use('/api/admin', adminCompatRoutes);
-app.use('/api/auth', authRoutes);
+// COMMENTED OUT: Duplicate TypeScript routes - use JavaScript versions instead (jsAuthRoutes)
+// app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/images', imagesRoutes);
 app.use('/api/user-panel', csrfProtection, dashboardRoutes);
