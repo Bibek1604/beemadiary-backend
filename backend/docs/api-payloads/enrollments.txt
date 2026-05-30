@@ -1,0 +1,307 @@
+API Payload Documentation - Enrollments
+Source files:
+- src/routes/clientEnrollment.routes.js
+- src/routes/clientPersonal.routes.js
+- src/models/clientEnrollment.model.js
+- src/utils/cloudinaryHelper.js
+- src/config/db.js
+
+Enrollment image handling rule:
+- profile_picture is a single file field and stores exactly one profile image for the client.
+- supporting images are sent as an array of files, using supporting_images or images.
+- supporting images are stored as an array on the client record in the images field.
+- supporting documents are not used by the active enrollment route; that terminology belongs to clientDocuments routes, not client enrollment.
+
+==================================================
+ENDPOINT
+Route: /api/client/enroll
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated agent
+Description: Creates a client enrollment record with personal profile, optional policy details, bank details, a single profile picture, and an array of supporting images.
+
+Required enrollment inputs:
+- One of full_name or the pair first_name + last_name
+- email
+- phone
+- address
+
+Optional inputs:
+- secondary_phone
+- dob
+- age
+- nominee_name
+- relation_with_nominee
+- profession
+- member_group
+- gender
+- reason_for_insurance
+- all policy_details fields
+- all bank_details fields
+- profile_picture
+- images / supporting_images
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: multipart/form-data
+
+Request Body Example:
+{
+  "personal_profile": {
+    "full_name": "Ram Kumar",
+    "first_name": "Ram",
+    "last_name": "Kumar",
+    "email": "ram.kumar@example.com",
+    "phone": "9841234567",
+    "secondary_phone": "9841234568",
+    "address": "Kathmandu, Nepal",
+    "dob": "1990-05-15",
+    "age": 35,
+    "nominee_name": "Sita Singh",
+    "relation_with_nominee": "Wife",
+    "profession": "Engineer",
+    "member_group": "Corporate",
+    "gender": "male",
+    "reason_for_insurance": "Financial Security"
+  },
+  "policy_details": {
+    "plan_name": "Endowment Plan",
+    "plan_number": "14",
+    "policy_number": "POL-2026-001",
+    "policy_term": "20 years",
+    "sum_assured": 1000000,
+    "premium_amount": 25000,
+    "ab_pwb": "AB-001",
+    "date_of_commencement": "2026-05-25",
+    "maturity_time": "2046-05-25",
+    "discount_scheme": "5% Corporate Discount",
+    "policy_status": "ACTIVE",
+    "premium_due_date": "2026-12-31",
+    "premium_status": "PAID"
+  },
+  "bank_details": {
+    "bank_name": "Nepal Bank Limited",
+    "bank_account": "1234567890",
+    "bank_branch": "Kathmandu Main Branch",
+    "premium_due_date": "2026-12-31",
+    "premium_status": "PAID"
+  }
+}
+
+Multipart File Fields:
+- profile_picture: single image file
+- images: array of image files
+- supporting_images: array of image files
+- image_labels / supporting_images_labels / imageLabels: array of labels matching the image order
+
+Validation Rules:
+- full_name is required unless first_name and last_name are provided together
+- email required, valid, max 255 characters
+- phone required, exactly 10 digits
+- address required
+- nominee_name required in this implementation
+- relation_with_nominee required in this implementation
+- gender required and must be male, female, or other
+- secondary_phone, when supplied, must be 10 digits
+- dob, when supplied, must be a valid date and not in the future
+- age, when supplied, must be between 0 and 120
+- bank_account must be digits only and max 20 digits
+- premium_due_date and date_of_commencement must be valid dates when supplied
+- policy_status normalizes to ACTIVE, INACTIVE, PENDING, LAPSED, or EXPIRED
+- premium_status only accepts DUE, PAID, or PARTIAL
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Client enrolled successfully",
+  "data": {
+    "data": {
+      "id": "uuid",
+      "client_id": "BM-987654321012",
+      "full_name": "Ram Kumar",
+      "first_name": "Ram",
+      "last_name": "Kumar",
+      "email": "ram.kumar@example.com",
+      "phone": "9841234567",
+      "address": "Kathmandu, Nepal",
+      "images": [
+        {
+          "label": "front-image",
+          "url": "https://...",
+          "public_id": "BM-987654321012-image-1"
+        }
+      ],
+      "profile_picture": "https://..."
+    },
+    "client_id": "uuid",
+    "policy": {
+      "id": "policy-id",
+      "policy_number": "LIC-POL-2026-001",
+      "plan_name": "Endowment Plan",
+      "bank_name": "Nepal Bank Limited"
+    },
+    "uploads": {
+      "profile_picture": {
+        "url": "https://...",
+        "public_id": "BM-987654321012-profile-picture",
+        "original_name": "profile.jpg",
+        "mime_type": "image/jpeg",
+        "size": 123456
+      },
+      "images": [
+        {
+          "label": "front-image",
+          "url": "https://...",
+          "public_id": "BM-987654321012-image-1",
+          "original_name": "front.jpg",
+          "mime_type": "image/jpeg",
+          "size": 123456
+        }
+      ]
+    },
+    "received_payload": {
+      "personal_profile": {
+        "full_name": "Ram Kumar",
+        "email": "ram.kumar@example.com"
+      },
+      "policy_details": {
+        "plan_name": "Endowment Plan"
+      },
+      "evidence": {
+        "profile_picture": {
+          "originalname": "profile.jpg",
+          "mimetype": "image/jpeg",
+          "size": 123456
+        },
+        "supporting_images": [
+          {
+            "originalname": "front.jpg",
+            "mimetype": "image/jpeg",
+            "size": 123456,
+            "label": "front-image"
+          }
+        ]
+      },
+      "bank_details": {
+        "bank_name": "Nepal Bank Limited",
+        "bank_account": "1234567890"
+      }
+    }
+  },
+  "code": 201
+}
+
+Possible Error Responses:
+- 400 validation error, duplicate email/phone, or failure to generate a unique client id
+- 401 missing token
+- 500 policy creation failure or unexpected failure
+
+MongoDB Collections Affected:
+- client
+- policy
+- company
+- agent
+
+Business Logic Notes:
+- The client record is created first, then the policy record is created in a best-effort sequence.
+- If the policy create fails, the newly created client is rolled back.
+- Supporting images are sent from the frontend as an array, not a single document field.
+- The single profile picture is separate and should be sent once using profile_picture.
+
+==================================================
+ENDPOINT
+Route: /api/enrollment/create
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated agent
+Description: Legacy alias for the enrollment flow. The active app route also accepts /api/client/enroll.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: multipart/form-data
+
+Request Body Example:
+Same as /api/client/enroll
+
+Validation Rules:
+Same as /api/client/enroll
+
+Success Response Example:
+Same as /api/client/enroll
+
+Possible Error Responses:
+Same as /api/client/enroll
+
+MongoDB Collections Affected:
+- client
+- policy
+- company
+- agent
+
+Business Logic Notes:
+- This alias is documented in the route comments and uses the same handler pattern.
+
+==================================================
+ENDPOINT
+Route: /api/client/enroll
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated agent
+Description: Legacy personal-only enrollment flow in src/routes/clientPersonal.routes.js. This file is not mounted by app.ts, but it exists in the source tree.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "first_name": "Ram",
+  "last_name": "Kumar",
+  "email": "ram.kumar@example.com",
+  "phone": "9841234567",
+  "address": "Kathmandu, Nepal",
+  "secondary_phone": "9841234568",
+  "dob": "1990-05-15",
+  "age": 35,
+  "gender": "male",
+  "profession": "Engineer",
+  "member_group": "Corporate",
+  "nominee_name": "Sita Singh",
+  "relation_with_nominee": "Wife",
+  "reason_for_insurance": "Financial Security"
+}
+
+Validation Rules:
+- first_name, last_name, email, phone, address, nominee_name, relation_with_nominee, gender are required
+- email must be valid
+- phone and secondary_phone must contain 9-15 digits
+- dob, if present, must be valid and not in the future
+- age, if present, must be between 18 and 100
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Client enrolled successfully",
+  "data": {
+    "client_id": "LIC-1716546834000-ABC12",
+    "client": {
+      "id": "LIC-1716546834000-ABC12",
+      "first_name": "Ram",
+      "last_name": "Kumar",
+      "email": "ram.kumar@example.com",
+      "phone": "9841234567"
+    }
+  },
+  "code": 201
+}
+
+Possible Error Responses:
+- 400 validation error or duplicate email/phone
+- 401 missing token
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- client
+
+Business Logic Notes:
+- This legacy file only creates the personal record and does not create policy or bank details.

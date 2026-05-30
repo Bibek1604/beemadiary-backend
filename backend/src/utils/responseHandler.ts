@@ -3,6 +3,11 @@
  * Standardized response formatting with empty state handling
  */
 
+const {
+  createSuccessResponse,
+  createErrorResponse,
+} = require('./responseFormatter');
+
 export interface PaginationMeta {
   total: number;
   page: number;
@@ -12,34 +17,35 @@ export interface PaginationMeta {
 
 export interface ApiSuccessResponse<T> {
   success: true;
-  code: string;
+  status: true;
+  code: string | number;
   message: string;
   data: T;
-  timestamp: string;
 }
 
 export interface ApiErrorResponse {
   success: false;
-  code: string;
+  status: false;
+  code: string | number;
   message: string;
-  details?: Record<string, any>;
-  timestamp: string;
+  errors?: Array<{ field?: string; message: string }>;
 }
 
 export interface PaginatedResponse<T> {
   success: true;
-  code: string;
+  status: true;
+  code: string | number;
   message: string;
   data: {
     results: T[];
     pagination: PaginationMeta;
   };
-  timestamp: string;
 }
 
 export interface EmptyStateResponse {
   success: true;
-  code: string;
+  status: true;
+  code: string | number;
   message: string;
   data: {
     results: any[];
@@ -50,7 +56,6 @@ export interface EmptyStateResponse {
       pages: number;
     };
   };
-  timestamp: string;
 }
 
 /**
@@ -67,13 +72,7 @@ export class ResponseHandler {
     code: string = 'SUCCESS',
     statusCode: number = 200
   ): ApiSuccessResponse<T> {
-    const response: ApiSuccessResponse<T> = {
-      success: true,
-      code,
-      message,
-      data,
-      timestamp: new Date().toISOString(),
-    };
+    const response = createSuccessResponse(message, data, statusCode, { code });
 
     res.status(statusCode).json(response);
     return response;
@@ -90,16 +89,7 @@ export class ResponseHandler {
     code: string = 'SUCCESS',
     statusCode: number = 200
   ): PaginatedResponse<T> {
-    const response: PaginatedResponse<T> = {
-      success: true,
-      code,
-      message,
-      data: {
-        results,
-        pagination,
-      },
-      timestamp: new Date().toISOString(),
-    };
+    const response = createSuccessResponse(message, { results, pagination }, statusCode, { code });
 
     res.status(statusCode).json(response);
     return response;
@@ -115,16 +105,15 @@ export class ResponseHandler {
     pagination?: PaginationMeta,
     statusCode: number = 200
   ): EmptyStateResponse {
-    const response: EmptyStateResponse = {
-      success: true,
-      code,
+    const response = createSuccessResponse(
       message,
-      data: {
+      {
         results: [],
         ...(pagination && { pagination }),
       },
-      timestamp: new Date().toISOString(),
-    };
+      statusCode,
+      { code }
+    );
 
     res.status(statusCode).json(response);
     return response;
@@ -175,13 +164,7 @@ export class ResponseHandler {
     statusCode: number = 400,
     details?: Record<string, any>
   ): ApiErrorResponse {
-    const response: ApiErrorResponse = {
-      success: false,
-      code,
-      message,
-      ...(details && { details }),
-      timestamp: new Date().toISOString(),
-    };
+    const response = createErrorResponse(message, details ? [details] : [], statusCode, { code });
 
     res.status(statusCode).json(response);
     return response;
@@ -226,16 +209,9 @@ export class ResponseHandler {
    * Validation error response
    */
   static validationError(
-    res: any,
-    errors: Record<string, string>
+    errors: Array<{ field?: string; message: string }>
   ): ApiErrorResponse {
-    return ResponseHandler.error(
-      res,
-      'Validation failed',
-      'VALIDATION_ERROR',
-      400,
-      { errors }
-    );
+    return createErrorResponse(CONSTANTS.ERRORS.VALIDATION_ERROR, errors, CONSTANTS.STATUS_CODES.BAD_REQUEST);
   }
 
   /**

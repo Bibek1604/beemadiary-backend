@@ -29,19 +29,19 @@ const authValidator = require("../validators/auth.validator");
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/AdminLoginSuccessResponse'
+ *               $ref: '#/components/schemas/AuthSuccessResponse'
  *       400:
  *         description: Validation failed or incorrect credentials.
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *               $ref: '#/components/schemas/AuthErrorResponse'
  *       429:
  *         description: Too many login attempts.
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/ErrorResponse'
+ *               $ref: '#/components/schemas/AuthErrorResponse'
  */
 router.post(
   "/admin/login",
@@ -72,10 +72,22 @@ router.post(
  *     responses:
  *       200:
  *         description: Authentication successful. Returns session token.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthSuccessResponse'
  *       400:
  *         description: Validation failed or incorrect credentials.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthErrorResponse'
  *       429:
  *         description: Too many login attempts.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthErrorResponse'
  */
 router.post(
   "/agent/login",
@@ -103,18 +115,19 @@ router.post(
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: boolean
- *                 token:
- *                   type: string
- *                 data:
- *                   type: object
+ *               $ref: '#/components/schemas/AuthSuccessResponse'
  *       400:
  *         description: Validation failed or incorrect credentials.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthErrorResponse'
  *       429:
  *         description: Too many login attempts.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthErrorResponse'
  */
 router.post(
   "/users/login",

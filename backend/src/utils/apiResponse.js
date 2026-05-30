@@ -1,13 +1,7 @@
-/**
- * Standardized API Response Utilities.
- *
- * All routes use these so the wire format is predictable:
- *   success: { status: true,  message, data, code }
- *   error:   { status: false, message, errors[], code }
- */
-
-const isMeaningful = (value) =>
-  value !== null && value !== undefined && value !== '' && !(typeof value === 'string' && value.trim() === '');
+const {
+  createSuccessResponse,
+  createErrorResponse,
+} = require('./responseFormatter');
 
 class ApiResponse {
   /**
@@ -17,12 +11,7 @@ class ApiResponse {
    * @param {number} [code] - HTTP status code, defaults to 200.
    */
   static success(message = 'Success', data = {}, code = 200) {
-    return {
-      status: true,
-      message,
-      data,
-      code,
-    };
+    return createSuccessResponse(message, data, code);
   }
 
   /**
@@ -35,27 +24,7 @@ class ApiResponse {
    * @param {number} [code] - HTTP status code, defaults to 500.
    */
   static error(message = 'An error occurred', errors = [], code = 500) {
-    let list;
-    if (errors === null || errors === undefined) {
-      list = [];
-    } else if (Array.isArray(errors)) {
-      list = errors;
-    } else if (errors instanceof Error) {
-      list = [errors.message];
-    } else {
-      list = [errors];
-    }
-
-    const cleaned = list
-      .map((item) => (item instanceof Error ? item.message : item))
-      .filter(isMeaningful);
-
-    return {
-      status: false,
-      message,
-      errors: cleaned,
-      code,
-    };
+    return createErrorResponse(message, errors, code);
   }
 }
 

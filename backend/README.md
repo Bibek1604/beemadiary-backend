@@ -159,6 +159,7 @@ npm run prisma:generate
 npm run prisma:migrate
 
 # (Optional) Seed database or view data
+# To run the seed script against production, set ALLOW_SEED_IN_PRODUCTION=true first.
 npm run prisma:studio
 ```
 

@@ -15,7 +15,7 @@ const swaggerOptions = {
     },
     servers: [
       {
-        url: 'http://localhost:3000',
+        url: 'http://localhost:3001',
         description: 'Development Server',
       },
       {
@@ -426,11 +426,6 @@ const swaggerOptions = {
             password: {
               type: 'string',
               example: 'SecurePass123!',
-            },
-            device_name: {
-              type: 'string',
-              example: 'Chrome on Windows',
-              description: 'Optional device name for session tracking',
             },
           },
           required: ['email', 'password'],

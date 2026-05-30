@@ -1,0 +1,595 @@
+API Payload Documentation - Authentication
+Source files:
+- src/routes/auth.routes.ts
+- src/routes/auth.routes.js
+- src/controllers/auth.controller.ts
+- src/controllers/auth.controller.js
+- src/services/auth.service.ts
+- src/services/auth.service.js
+- src/validators/auth.validator.js
+- src/repositories/auth.repository.ts
+- src/repositories/admin.repository.js
+- src/repositories/agent.repository.js
+- src/repositories/session.repository.js
+- src/repositories/audit.repository.js
+- src/repositories/bulkNotification.repository.js
+- src/repositories/notification.repository.js
+- src/repositories/agentNotification.repository.js
+- src/repositories/client.repository.js
+- src/repositories/company.repository.js
+
+Common response envelope used by this module:
+- Success: { status: true, message: string, data?: any, code: number }
+- Error:   { status: false, message: string, errors?: any[], code: number }
+
+==================================================
+ENDPOINT
+Route: /api/auth/register
+Method: POST
+Authentication Required: No
+Roles Allowed: Public
+Description: Register a new user record in the shared user collection. The TypeScript service defaults the role to AGENT.
+
+Headers:
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "email": "new.agent@example.com",
+  "password": "ChangeMe123!",
+  "first_name": "New",
+  "last_name": "Agent"
+}
+
+Validation Rules:
+- email: required, valid email
+- password: required, minimum 12 characters
+- first_name: required, non-empty string
+- last_name: required, non-empty string
+
+Success Response Example:
+{
+  "status": true,
+  "message": "User registered successfully",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "email": "new.agent@example.com",
+      "firstName": "New",
+      "lastName": "Agent",
+      "role": "AGENT"
+    }
+  },
+  "code": 201
+}
+
+Possible Error Responses:
+- 400 validation error or weak password
+- 409 user already exists
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- user
+
+Business Logic Notes:
+- Always creates AGENT users unless another role is explicitly used by the service layer.
+- Passwords are hashed before persistence.
+
+==================================================
+ENDPOINT
+Route: /api/auth/login
+Method: POST
+Authentication Required: No
+Roles Allowed: Public
+Description: Generic login that returns access token, refresh token, and active session metadata.
+
+Headers:
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "email": "agent@test.com",
+  "password": "Agent@123456"
+}
+
+Validation Rules:
+- email: required, valid email
+- password: required, non-empty string
+- optional device_name may be accepted by controller layer
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Login successful",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "email": "agent@test.com",
+      "firstName": "Test",
+      "lastName": "Agent",
+      "role": "AGENT"
+    },
+    "tokens": {
+      "accessToken": "jwt-access-token",
+      "refreshToken": "jwt-refresh-token"
+    },
+    "session": {
+      "id": "session-id",
+      "expiresAt": "2026-05-30T12:00:00.000Z"
+    }
+  },
+  "code": 200
+}
+
+Possible Error Responses:
+- 400 invalid credentials or validation error
+- 403 inactive account
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- user
+- session
+- refreshToken
+- auditLog
+
+Business Logic Notes:
+- Creates a new session record and refresh token on successful login.
+- The token payload includes id, email, role, and type.
+
+==================================================
+ENDPOINT
+Route: /api/auth/admin/login
+Method: POST
+Authentication Required: No
+Roles Allowed: Public
+Description: Legacy/admin login flow that authenticates against the admin collection and returns a single JWT access token.
+
+Headers:
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "email": "admin@beemadiary.com",
+  "password": "kathmandu@kts@123"
+}
+
+Validation Rules:
+- email: required, valid email
+- password: required, non-empty string
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Login successful",
+  "token": "jwt-access-token",
+  "data": {
+    "id": "uuid",
+    "email": "admin@beemadiary.com"
+  }
+}
+
+Possible Error Responses:
+- 400 invalid credentials
+- 403 account deactivated
+- 429 too many login attempts if the route layer adds rate limiting
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- admin
+- session
+- auditLog
+
+Business Logic Notes:
+- Uses the CommonJS auth controller and returns the compact admin payload.
+- The route body is documented in Swagger and should use AdminLoginRequest.
+
+==================================================
+ENDPOINT
+Route: /api/auth/agent/login
+Method: POST
+Authentication Required: No
+Roles Allowed: Public
+Description: Legacy/agent login flow that authenticates against the agent collection and returns a single JWT access token.
+
+Headers:
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "email": "agent@test.com",
+  "password": "Agent@123456"
+}
+
+Validation Rules:
+- email: required, valid email
+- password: required, non-empty string
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Login successful",
+  "token": "jwt-access-token",
+  "data": {
+    "id": "uuid",
+    "full_name": "Test Agent",
+    "email": "agent@test.com",
+    "status": "active",
+    "company_id": "company-id",
+    "role": "agent"
+  }
+}
+
+Possible Error Responses:
+- 401 invalid credentials
+- 403 inactive account
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- agent
+- session
+- auditLog
+
+Business Logic Notes:
+- The route body is documented in Swagger and should use AgentLoginRequest.
+- Response is a single token plus the compact agent profile.
+
+==================================================
+ENDPOINT
+Route: /api/auth/logout
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Terminates the current session and clears cookies.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "session_id": "session-id"
+}
+
+Validation Rules:
+- auth token required
+- session_id is used by the service layer when present
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Logout successful",
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 unauthenticated request
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- session
+
+Business Logic Notes:
+- Clears accessToken and refreshToken cookies.
+
+==================================================
+ENDPOINT
+Route: /api/auth/refresh
+Method: POST
+Authentication Required: No, but refreshToken is required in body or cookie
+Roles Allowed: Public
+Description: Rotates refresh token and issues a new access token pair.
+
+Headers:
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "refreshToken": "jwt-refresh-token"
+}
+
+Validation Rules:
+- refreshToken is optional in schema but required in practice if cookie is absent
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Token refreshed",
+  "data": {
+    "tokens": {
+      "accessToken": "new-access-token",
+      "refreshToken": "new-refresh-token"
+    }
+  },
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 missing or invalid refresh token
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- refreshToken
+- session
+
+Business Logic Notes:
+- Old refresh token is revoked before the new one is stored.
+
+==================================================
+ENDPOINT
+Route: /api/auth/sessions
+Method: GET
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Returns active sessions for the current user.
+
+Headers:
+- Authorization: Bearer <token>
+
+Request Body Example:
+{}
+
+Validation Rules:
+- auth token required
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Active sessions retrieved",
+  "data": {
+    "sessions": [
+      {
+        "id": "session-id",
+        "deviceName": "Web Browser",
+        "ipAddress": "127.0.0.1",
+        "createdAt": "2026-05-30T10:00:00.000Z",
+        "lastActivity": "2026-05-30T10:15:00.000Z",
+        "isActive": true
+      }
+    ]
+  },
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 unauthenticated request
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- session
+
+Business Logic Notes:
+- Returns only active sessions by default.
+
+==================================================
+ENDPOINT
+Route: /api/auth/sessions/:sessionId
+Method: DELETE
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Terminates a specific session.
+
+Headers:
+- Authorization: Bearer <token>
+
+Request Body Example:
+{}
+
+Validation Rules:
+- sessionId path parameter required
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Session terminated successfully",
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 unauthenticated request
+- 404 session not found
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- session
+
+Business Logic Notes:
+- Only the matching session record is disabled.
+
+==================================================
+ENDPOINT
+Route: /api/auth/logout-all
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Logs the user out from every device and revokes all refresh tokens.
+
+Headers:
+- Authorization: Bearer <token>
+
+Request Body Example:
+{}
+
+Validation Rules:
+- auth token required
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Logged out from all devices",
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 unauthenticated request
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- session
+- refreshToken
+
+Business Logic Notes:
+- Bulk terminates sessions and revokes token families.
+
+==================================================
+ENDPOINT
+Route: /api/auth/change-password
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Changes the current user's password after verifying the existing password.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "current_password": "OldPassword123!",
+  "new_password": "NewPassword123!"
+}
+
+Validation Rules:
+- current_password: required
+- new_password: required, minimum 12 characters
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Password changed successfully",
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 unauthenticated request
+- 400 invalid current password or weak new password
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- user
+- admin
+- agent
+- client
+
+Business Logic Notes:
+- Password strength validation is enforced by the service layer.
+
+==================================================
+ENDPOINT
+Route: /api/auth/forgot-password
+Method: POST
+Authentication Required: No
+Roles Allowed: Public
+Description: Creates a password reset token for the given email when the account exists.
+
+Headers:
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "email": "agent@test.com"
+}
+
+Validation Rules:
+- email: required, valid email
+
+Success Response Example:
+{
+  "status": true,
+  "message": "If the email exists, a reset link has been sent",
+  "data": {
+    "email": "agent@test.com"
+  },
+  "code": 200
+}
+
+Possible Error Responses:
+- 400 validation error
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- passwordReset
+- user
+
+Business Logic Notes:
+- The response is intentionally non-committal when the email does not exist.
+
+==================================================
+ENDPOINT
+Route: /api/auth/send-verification
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Generates an email verification token for the supplied email.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "email": "agent@test.com"
+}
+
+Validation Rules:
+- email: required, valid email
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Verification email requested",
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 unauthenticated request
+- 400 validation error
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- emailVerification
+- user
+
+Business Logic Notes:
+- The verification record stores a one-time token with a 24 hour expiry.
+
+==================================================
+ENDPOINT
+Route: /api/auth/me
+Method: GET
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Returns the current JWT subject as a simple profile payload.
+
+Headers:
+- Authorization: Bearer <token>
+
+Request Body Example:
+{}
+
+Validation Rules:
+- auth token required
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Current user retrieved",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "email": "agent@test.com",
+      "role": "AGENT",
+      "type": "AGENT"
+    }
+  },
+  "code": 200
+}
+
+Possible Error Responses:
+- 401 unauthenticated request
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- none directly; reads JWT claims
+
+Business Logic Notes:
+- The payload is derived from the token subject rather than a live collection lookup.

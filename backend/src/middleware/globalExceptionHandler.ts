@@ -1,6 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
 
 /**

@@ -87,11 +87,6 @@ const errorMiddleware = (err, req, res, next) => {
   // Format standard error response
   const responsePayload = ApiResponse.error(message, errors);
 
-  // Expose stack trace only in development
-  if (env.NODE_ENV === "development" && statusCode === 500) {
-    responsePayload.stack = err.stack;
-  }
-
   return res.status(statusCode).json(responsePayload);
 };
 

@@ -11,7 +11,20 @@ const { prisma } = require("../config/db");
 const bcrypt = require("bcryptjs");
 
 async function main() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const allowProductionSeed = process.env.ALLOW_SEED_IN_PRODUCTION === "true";
+
+  if (isProduction && !allowProductionSeed) {
+    throw new Error(
+      "Refusing to run seed in production. Set ALLOW_SEED_IN_PRODUCTION=true only when you intentionally want to reseed a live database."
+    );
+  }
+
   console.log("Seeding MongoDB data...");
+
+  if (isProduction) {
+    console.warn("Production seed override enabled. Existing admin, agent, client, and policy records will be upserted.");
+  }
 
   const adminEmail = "admin@beemadiary.com";
   const agentEmail = "agent@test.com";

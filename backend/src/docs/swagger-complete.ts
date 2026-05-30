@@ -12,7 +12,7 @@ const swaggerOptions = {
     },
     servers: [
       {
-        url: 'http://localhost:3000',
+        url: 'http://localhost:3001',
         description: 'Development Server',
       },
       {
@@ -38,6 +38,90 @@ const swaggerOptions = {
             message: { type: 'string' },
             data: { type: 'object' },
             code: { type: 'integer' },
+          },
+        },
+        RegisterRequest: {
+          type: 'object',
+          required: ['email', 'password', 'first_name', 'last_name'],
+          properties: {
+            email: { type: 'string', format: 'email', example: 'user@example.com' },
+            password: { type: 'string', example: 'ChangeMe123!' },
+            first_name: { type: 'string', example: 'John' },
+            last_name: { type: 'string', example: 'Doe' },
+          },
+        },
+        LoginRequest: {
+          type: 'object',
+          required: ['email', 'password'],
+          properties: {
+            email: { type: 'string', format: 'email', example: 'admin@beemadiary.com' },
+            password: { type: 'string', example: 'Admin@123456' },
+          },
+        },
+        AdminLoginRequest: {
+          type: 'object',
+          required: ['email', 'password'],
+          properties: {
+            email: { type: 'string', format: 'email', example: 'admin@beemadiary.com' },
+            password: { type: 'string', example: 'Admin@123456' },
+          },
+        },
+        AgentLoginRequest: {
+          type: 'object',
+          required: ['email', 'password'],
+          properties: {
+            email: { type: 'string', format: 'email', example: 'agent@test.com' },
+            password: { type: 'string', example: 'Agent@123456' },
+          },
+        },
+        AuthSuccessResponse: {
+          type: 'object',
+          properties: {
+            status: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Login successful' },
+            token: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIs...' },
+            data: {
+              oneOf: [
+                { $ref: '#/components/schemas/Agent' },
+                {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string', example: 'admin-id-123' },
+                    email: { type: 'string', format: 'email', example: 'admin@beemadiary.com' },
+                    username: { type: 'string', example: 'admin' },
+                  },
+                },
+              ],
+            },
+            code: { type: 'integer', example: 200 },
+          },
+        },
+        AuthErrorResponse: {
+          type: 'object',
+          properties: {
+            status: { type: 'boolean', example: false },
+            message: { type: 'string', example: 'Invalid credentials' },
+            errors: {
+              type: 'array',
+              items: { type: 'string' },
+              example: ['Email or password is incorrect'],
+            },
+            code: { type: 'integer', example: 400 },
+          },
+        },
+        AdminLoginSuccessResponse: {
+          type: 'object',
+          properties: {
+            status: { type: 'boolean', example: true },
+            message: { type: 'string', example: 'Login successful' },
+            token: { type: 'string', example: 'eyJhbGciOiJIUzI1NiIs...' },
+            data: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', example: '44be25ef-b1fa-4009-8438-fb8d97686d0a' },
+                email: { type: 'string', example: 'admin@beemadiary.com' },
+              },
+            },
           },
         },
         ErrorResponse: {

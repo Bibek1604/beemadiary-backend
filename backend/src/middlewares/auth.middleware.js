@@ -12,7 +12,7 @@ const authenticate = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json(
-        ApiResponse.error("Authentication required", ["Access token is missing or malformed"])
+        ApiResponse.error("Unauthorized access", ["Access token is missing or malformed"])
       );
     }
 
@@ -24,7 +24,7 @@ const authenticate = async (req, res, next) => {
       decoded = jwt.verify(token, env.JWT_SECRET);
     } catch (err) {
       return res.status(401).json(
-        ApiResponse.error("Invalid token", [err.message || "Failed to authenticate token"])
+        ApiResponse.error("Unauthorized access", ["The access token is invalid or has expired"])
       );
     }
 
@@ -63,7 +63,7 @@ const authenticate = async (req, res, next) => {
     next();
   } catch (error) {
     return res.status(500).json(
-      ApiResponse.error("Authentication verification failed", [error.message])
+      ApiResponse.error("Something went wrong. Please try again later.")
     );
   }
 };

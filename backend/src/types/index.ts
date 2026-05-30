@@ -13,11 +13,12 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export interface ApiResponse<T = any> {
-  status: boolean;
+  success: boolean;
+  status?: boolean;
   message: string;
   data?: T;
   errors?: any[];
-  code: number;
+  code: number | string;
 }
 
 export interface DashboardSummary {
@@ -91,11 +92,12 @@ export interface DashboardOverview {
 }
 
 export interface ErrorResponse {
-  status: false;
+  success: false;
+  status?: false;
   message: string;
   errors?: Array<{
     field?: string;
     message: string;
   }>;
-  code: number;
+  code: number | string;
 }

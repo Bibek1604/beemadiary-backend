@@ -64,6 +64,7 @@ app.use(sanitizeRequest);
 
 // Swagger API Documentation
 const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 logger.info('Swagger API Documentation available at /api-docs');

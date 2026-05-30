@@ -1,0 +1,311 @@
+API Payload Documentation - Uploads and Images
+Source files:
+- src/routes/upload.routes.ts
+- src/routes/images.routes.ts
+- src/utils/imageHandler.ts
+- src/middleware/csrf.ts
+
+==================================================
+ENDPOINT
+Route: /api/upload/profile-picture
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Uploads one profile picture file and stores it in the profile-pics area.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: multipart/form-data
+
+Request Body Example:
+{}
+
+Multipart File Fields:
+- file: single image file
+
+Validation Rules:
+- file required
+- allowed image types: JPEG, PNG, WebP
+- max size: 5MB
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Profile picture uploaded successfully",
+  "data": {
+    "image": {
+      "url": "https://...",
+      "size": 123456,
+      "width": 500,
+      "height": 500,
+      "storage": "cloudinary"
+    }
+  },
+  "code": 201
+}
+
+Possible Error Responses:
+- 401 missing token
+- 404 no file provided
+- 400 invalid image format or validation failure
+- 500 upload failure
+
+MongoDB Collections Affected:
+- none directly; the file service writes to storage and may update dependent records elsewhere
+
+Business Logic Notes:
+- The route resizes images to 500x500 before upload.
+- This is the correct endpoint for a single user profile picture.
+
+==================================================
+ENDPOINT
+Route: /api/upload/document
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Uploads one document file and stores it in the documents area.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: multipart/form-data
+
+Request Body Example:
+{}
+
+Multipart File Fields:
+- file: single file
+
+Validation Rules:
+- file required
+- validation is handled by the image handler; the file is stored if accepted
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Document uploaded successfully",
+  "data": {
+    "image": {
+      "url": "https://...",
+      "size": 123456,
+      "width": 0,
+      "height": 0,
+      "storage": "cloudinary"
+    }
+  },
+  "code": 201
+}
+
+Possible Error Responses:
+- 401 missing token
+- 404 no file provided
+- 400 invalid file
+- 500 upload failure
+
+MongoDB Collections Affected:
+- none directly
+
+Business Logic Notes:
+- This route is file-storage oriented and does not bind the upload to a client record.
+
+==================================================
+ENDPOINT
+Route: /api/upload/:folder/:filename
+Method: GET
+Authentication Required: No
+Roles Allowed: Public
+Description: Serves an uploaded file from local storage when the folder is allowed and the file exists.
+
+Headers:
+- none required
+
+Request Body Example:
+{}
+
+Path Parameters:
+- folder: profile-pictures, documents, or profile-pics
+- filename: stored filename
+
+Success Response Example:
+- binary file stream with Content-Type set from file extension
+
+Possible Error Responses:
+- 404 invalid folder, invalid filename, or file not found
+
+MongoDB Collections Affected:
+- none directly
+
+Business Logic Notes:
+- Prevents directory traversal by rejecting .. and / in filename.
+- This route streams local files, not Cloudinary files.
+
+==================================================
+ENDPOINT
+Route: /api/upload/:folder/:filename
+Method: DELETE
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Deletes a stored file.
+
+Headers:
+- Authorization: Bearer <token>
+
+Request Body Example:
+{}
+
+Path Parameters:
+- folder: profile-pictures, documents, or profile-pics
+- filename: stored filename
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Image deleted successfully",
+  "data": {
+    "message": "..."
+  },
+  "code": 200
+}
+
+Possible Error Responses:
+- 404 invalid folder or filename
+- 401 missing token
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- none directly
+
+Business Logic Notes:
+- The route deletes the Cloudinary/local representation through the imageHandler abstraction.
+
+==================================================
+ENDPOINT
+Route: /api/upload/bulk
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Uploads multiple files in one request.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: multipart/form-data
+
+Request Body Example:
+{}
+
+Multipart File Fields:
+- files: array of up to 10 image files
+
+Validation Rules:
+- at least one file required
+- each file is validated individually
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Bulk upload completed: 2 succeeded, 1 failed",
+  "data": {
+    "results": [
+      {
+        "filename": "one.jpg",
+        "success": true,
+        "url": "https://...",
+        "storage": "cloudinary"
+      }
+    ],
+    "summary": {
+      "successCount": 2,
+      "failureCount": 1
+    }
+  },
+  "code": 201
+}
+
+Possible Error Responses:
+- 401 missing token
+- 404 no files provided
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- none directly
+
+Business Logic Notes:
+- Each file is uploaded independently and failures are reported per file.
+
+==================================================
+ENDPOINT
+Route: /api/upload/from-url
+Method: POST
+Authentication Required: Yes
+Roles Allowed: Any authenticated user
+Description: Downloads a file from a URL and re-uploads it into the selected folder.
+
+Headers:
+- Authorization: Bearer <token>
+- Content-Type: application/json
+
+Request Body Example:
+{
+  "url": "https://example.com/image.jpg",
+  "folder": "documents"
+}
+
+Validation Rules:
+- url is required
+- folder defaults to documents when omitted
+
+Success Response Example:
+{
+  "status": true,
+  "message": "Image uploaded from URL successfully",
+  "data": {
+    "image": {
+      "url": "https://...",
+      "size": 123456,
+      "width": 0,
+      "height": 0,
+      "storage": "cloudinary"
+    }
+  },
+  "code": 201
+}
+
+Possible Error Responses:
+- 401 missing token
+- 400 URL missing or download/upload failure
+- 500 unexpected failure
+
+MongoDB Collections Affected:
+- none directly
+
+Business Logic Notes:
+- The downloaded file is uploaded using the same image handler abstraction.
+
+==================================================
+ENDPOINT
+Route: /api/images/:folder/:filename
+Method: GET
+Authentication Required: No
+Roles Allowed: Public
+Description: Returns an image by trying Cloudinary first when a public id is supplied, otherwise falls back to local storage.
+
+Headers:
+- none required
+
+Request Body Example:
+{}
+
+Query Parameters:
+- pub: optional Cloudinary public id
+
+Success Response Example:
+- binary image stream with Content-Type from the source image
+
+Possible Error Responses:
+- 404 invalid file or file not found
+
+MongoDB Collections Affected:
+- none directly
+
+Business Logic Notes:
+- This route is the preferred read path for images exposed by the application.
+- It checks Cloudinary first and then falls back to the local backup path.

@@ -10,30 +10,24 @@ import {
   AppError,
   ValidationError,
   DatabaseError,
-  NotFoundError,
   ConflictError,
-  AuthenticationError,
-  AuthorizationError,
   FileUploadError,
-  ExternalServiceError,
   TimeoutError,
   isAppError,
   ERROR_MESSAGES,
-  SuspiciousInputError,
-  UnprocessableEntityError,
-  ServiceUnavailableError,
 } from './custom-error-classes';
+const {
+  createErrorResponse,
+  toSafeMessage,
+} = require('../../utils/responseFormatter');
 
 interface ErrorResponse {
   success: false;
-  error: {
-    code: string;
-    message: string;
-    details?: any;
-    timestamp: string;
-  };
+  status: false;
+  message: string;
+  errors?: Array<{ field?: string; message: string }>;
+  code: number | string;
   requestId: string;
-  suggestion?: string;
 }
 
 export const globalErrorHandler = (
@@ -65,19 +59,15 @@ export const globalErrorHandler = (
       classifyError: classifyErr.message,
     });
 
-    return res.status(500).json({
-      success: false,
-      error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'An unexpected error occurred. Please try again later.',
-        timestamp,
-      },
-      requestId,
-    });
+    return res.status(500).json(
+      createErrorResponse('Something went wrong. Please try again later.', [], 500, {
+        requestId,
+      })
+    );
   }
 
   logError(appError, req, requestId, timestamp);
-  const response = buildErrorResponse(appError, requestId, timestamp);
+  const response = buildErrorResponse(appError, requestId);
 
   if (appError.code === 'RATE_LIMIT_EXCEEDED') {
     res.set('Retry-After', '60');
@@ -95,11 +85,11 @@ function classifyError(error: any, requestId: string): AppError {
   // MongoDB errors
   if (error?.code === 11000 || error?.name === 'MongoServerError') {
     return new ConflictError(
-      `A record with this ${Object.keys(error.keyPattern || {})[0] || 'field'} already exists. Please use a different value.`
+      'Resource already exists.'
     );
   }
 
-  if (error?.name === 'ValidationError' || error?.name === 'BSONError') {
+  if (error?.name === 'ValidationError' || error?.name === 'BSONError' || error?.name === 'CastError') {
     return new ValidationError('Invalid data provided. Please check your input.', [
       { field: 'unknown', message: error.message },
     ]);
@@ -126,11 +116,26 @@ function classifyError(error: any, requestId: string): AppError {
     );
   }
 
+  if (/cannot read property|cannot read properties|cannot destructure|undefined/i.test(error?.message || '')) {
+    return new AppError(
+      'INTERNAL_SERVER_ERROR',
+      'Requested information could not be processed.',
+      500,
+      true
+    );
+  }
+
+  if (/invalid.*id|objectid/i.test(error?.message || '')) {
+    return new ValidationError('Invalid record identifier provided.', [
+      { field: 'id', message: 'Invalid record identifier provided.' },
+    ]);
+  }
+
   // Generic HTTP error codes
   if (typeof error.statusCode === 'number') {
     return new AppError(
       error.code || 'HTTP_ERROR',
-      error.message || ERROR_MESSAGES[error.code] || 'An error occurred',
+      toSafeMessage(error.message || ERROR_MESSAGES[error.code] || 'An error occurred', error.statusCode),
       error.statusCode,
       true
     );
@@ -154,49 +159,16 @@ function classifyError(error: any, requestId: string): AppError {
 
 function buildErrorResponse(
   error: AppError,
-  requestId: string,
-  timestamp: string
+  requestId: string
 ): ErrorResponse {
-  const response: ErrorResponse = {
-    success: false,
-    error: {
-      code: error.code,
-      message: error.userMessage,
-      timestamp,
-    },
-    requestId,
-  };
+  const response = createErrorResponse(
+    error.userMessage,
+    error instanceof ValidationError && error.details?.length > 0 ? error.details : [],
+    error.statusCode,
+    { requestId }
+  );
 
-  if (error instanceof ValidationError && error.details?.length > 0) {
-    response.error.details = error.details;
-  }
-
-  response.suggestion = getSuggestion(error.code);
-
-  return response;
-}
-
-function getSuggestion(errorCode: string): string | undefined {
-  const suggestions: Record<string, string> = {
-    VALIDATION_ERROR:
-      'Review the error details above and correct any invalid fields.',
-    AUTHENTICATION_REQUIRED: 'Log in to your account to continue.',
-    ACCESS_DENIED: 'Contact support if you believe you should have access.',
-    NOT_FOUND:
-      'Check the URL and try again. The resource may have been deleted.',
-    RATE_LIMIT_EXCEEDED: 'Wait a moment before trying again.',
-    QUOTA_EXCEEDED: 'Upgrade your plan for more capacity.',
-    DATABASE_ERROR:
-      'Try again in a few moments. If the problem persists, contact support.',
-    EXTERNAL_SERVICE_ERROR: 'Try again in a few moments.',
-    REQUEST_TIMEOUT:
-      'The request was too slow. Try again or contact support if it persists.',
-    SERVICE_UNAVAILABLE:
-      'Try again in a few moments. We are working to restore service.',
-    CONFLICT: 'Use a different value or delete the existing record first.',
-  };
-
-  return suggestions[errorCode];
+  return response as ErrorResponse;
 }
 
 function logError(
