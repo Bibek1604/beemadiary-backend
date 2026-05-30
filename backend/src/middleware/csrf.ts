@@ -59,7 +59,7 @@ export const csrfProtection = (req: Request, res: Response, next: NextFunction) 
  * CSRF token setter middleware
  * Sets CSRF token in response for client to use
  */
-export const setCSRFToken = (req: Request, res: Response, next: NextFunction) => {
+export const setCSRFToken = (req: Request, res: Response, _next?: NextFunction) => {
   // Generate new token
   const token = generateCSRFToken();
 
@@ -89,7 +89,7 @@ export const setCSRFToken = (req: Request, res: Response, next: NextFunction) =>
  */
 export const csrfErrorHandler = (
   err: any,
-  req: Request,
+  _req: Request,
   res: Response,
   next: NextFunction
 ) => {
@@ -98,5 +98,5 @@ export const csrfErrorHandler = (
       ResponseHandler.forbidden('Invalid CSRF token')
     );
   }
-  next(err);
+  return next(err);
 };

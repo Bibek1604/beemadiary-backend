@@ -11,7 +11,7 @@ export const validateBody = (schema: ZodSchema) => {
     try {
       const validated = schema.parse(req.body);
       req.body = validated;
-      next();
+      return next();
     } catch (error) {
       if (error instanceof z.ZodError) {
         const formattedErrors = error.errors.map((err) => ({
@@ -78,7 +78,7 @@ export const validateParams = (schema: ZodSchema) => {
 /**
  * Request sanitizer - removes empty/null/undefined values
  */
-export const sanitizeRequest = (req: Request, res: Response, next: NextFunction) => {
+export const sanitizeRequest = (req: Request, _res: Response, next: NextFunction) => {
   const sanitizeValue = (obj: any): any => {
     if (obj === null || obj === undefined) {
       return undefined;

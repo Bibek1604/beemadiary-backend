@@ -81,11 +81,61 @@ export class AuthController {
   });
 
   adminLogin = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    return this.login(req, res);
+    const { email, password, device_name } = req.body;
+    const ipAddress = req.ip || 'unknown';
+    const userAgent = req.get('user-agent') || 'unknown';
+
+    const result = await authService.login(
+      email,
+      password,
+      device_name || 'Web Browser',
+      ipAddress,
+      userAgent
+    );
+
+    // Set secure cookies
+    res.cookie('accessToken', result.tokens.accessToken, {
+      ...cookieOptions,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+
+    res.cookie('refreshToken', result.tokens.refreshToken, {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return res.status(CONSTANTS.STATUS_CODES.OK).json(
+      ResponseHandler.success('Admin login successful', result)
+    );
   });
 
   agentLogin = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
-    return this.login(req, res);
+    const { email, password, device_name } = req.body;
+    const ipAddress = req.ip || 'unknown';
+    const userAgent = req.get('user-agent') || 'unknown';
+
+    const result = await authService.login(
+      email,
+      password,
+      device_name || 'Web Browser',
+      ipAddress,
+      userAgent
+    );
+
+    // Set secure cookies
+    res.cookie('accessToken', result.tokens.accessToken, {
+      ...cookieOptions,
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+
+    res.cookie('refreshToken', result.tokens.refreshToken, {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return res.status(CONSTANTS.STATUS_CODES.OK).json(
+      ResponseHandler.success('Agent login successful', result)
+    );
   });
 
   /**
@@ -100,10 +150,8 @@ export class AuthController {
     }
 
     const { session_id } = req.body;
-    const ipAddress = req.ip || 'unknown';
-    const userAgent = req.get('user-agent') || 'unknown';
 
-    await authService.logout(req.user.id, session_id, ipAddress, userAgent);
+    await authService.logout(req.user.id, session_id);
 
     // Clear cookies
     res.clearCookie('accessToken', cookieOptions);
@@ -183,10 +231,8 @@ export class AuthController {
     }
 
     const { sessionId } = req.params;
-    const ipAddress = req.ip || 'unknown';
-    const userAgent = req.get('user-agent') || 'unknown';
 
-    await authService.terminateSession(req.user.id, sessionId, ipAddress, userAgent);
+    await authService.terminateSession(req.user.id, sessionId);
 
     return res.status(CONSTANTS.STATUS_CODES.OK).json(
       ResponseHandler.success('Session terminated successfully')
@@ -204,10 +250,7 @@ export class AuthController {
       );
     }
 
-    const ipAddress = req.ip || 'unknown';
-    const userAgent = req.get('user-agent') || 'unknown';
-
-    await authService.logoutAllDevices(req.user.id, ipAddress, userAgent);
+    await authService.logoutAllDevices(req.user.id);
 
     // Clear cookies
     res.clearCookie('accessToken', cookieOptions);
@@ -230,15 +273,11 @@ export class AuthController {
     }
 
     const { current_password, new_password } = req.body;
-    const ipAddress = req.ip || 'unknown';
-    const userAgent = req.get('user-agent') || 'unknown';
 
     await authService.changePassword(
       req.user.id,
       current_password,
-      new_password,
-      ipAddress,
-      userAgent
+      new_password
     );
 
     return res.status(CONSTANTS.STATUS_CODES.OK).json(
@@ -252,10 +291,8 @@ export class AuthController {
    */
   forgotPassword = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { email } = req.body;
-    const ipAddress = req.ip || 'unknown';
-    const userAgent = req.get('user-agent') || 'unknown';
 
-    const result = await authService.requestPasswordReset(email, ipAddress, userAgent);
+    const result = await authService.requestPasswordReset(email);
 
     return res.status(CONSTANTS.STATUS_CODES.OK).json(
       ResponseHandler.success(result.message, { email })
@@ -274,14 +311,10 @@ export class AuthController {
     }
 
     const { email } = req.body;
-    const ipAddress = req.ip || 'unknown';
-    const userAgent = req.get('user-agent') || 'unknown';
 
     const result = await authService.requestEmailVerification(
       req.user.id,
-      email,
-      ipAddress,
-      userAgent
+      email
     );
 
     return res.status(CONSTANTS.STATUS_CODES.OK).json(
