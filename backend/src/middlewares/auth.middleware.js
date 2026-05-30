@@ -12,7 +12,7 @@ const authenticate = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json(
-        ApiResponse.error("Unauthorized access", ["Access token is missing or malformed"])
+        ApiResponse.error("Unauthorized access", ["Access token is missing or malformed"], 401)
       );
     }
 
@@ -24,7 +24,7 @@ const authenticate = async (req, res, next) => {
       decoded = jwt.verify(token, env.JWT_SECRET);
     } catch (err) {
       return res.status(401).json(
-        ApiResponse.error("Unauthorized access", ["The access token is invalid or has expired"])
+        ApiResponse.error("Unauthorized access", ["The access token is invalid or has expired"], 401)
       );
     }
 
@@ -39,7 +39,7 @@ const authenticate = async (req, res, next) => {
 
     if (!session) {
       return res.status(401).json(
-        ApiResponse.error("Session terminated", ["Session is invalid or has been logged out"])
+        ApiResponse.error("Session terminated", ["Session is invalid or has been logged out"], 401)
       );
     }
 
@@ -47,7 +47,7 @@ const authenticate = async (req, res, next) => {
       // Clean up expired session in database asynchronously
       prisma.session.delete({ where: { token } }).catch(() => {});
       return res.status(401).json(
-        ApiResponse.error("Session expired", ["Your session has expired. Please log in again"])
+        ApiResponse.error("Session expired", ["Your session has expired. Please log in again"], 401)
       );
     }
 

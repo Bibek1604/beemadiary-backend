@@ -20,6 +20,16 @@ cloudinary.config({
  */
 exports.uploadToCloudinary = async (fileBuffer, folder = 'agent-profiles', publicId = null) => {
   try {
+    // Validate input
+    if (!fileBuffer || fileBuffer.length === 0) {
+      throw new Error('File buffer is empty');
+    }
+
+    // Verify Cloudinary is configured
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY) {
+      throw new Error('Cloudinary credentials not configured');
+    }
+
     // Create local backup directory
     const uploadsRoot = path.join(process.cwd(), 'uploads');
     const backupDir = path.join(uploadsRoot, folder);
@@ -30,16 +40,19 @@ exports.uploadToCloudinary = async (fileBuffer, folder = 'agent-profiles', publi
     try {
       processedBuffer = await sharp(fileBuffer).webp({ quality: 80 }).toBuffer();
     } catch (procErr) {
+      console.warn('Sharp processing failed, using original buffer:', procErr.message);
       // fallback to original buffer
       processedBuffer = fileBuffer;
     }
 
-    // Save local backup
-    const uniqueName = `${folder}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}.webp`;
+    // Save local backup with simple filename (folder path already included in backupDir)
+    const timestamp = Date.now();
+    const randomId = crypto.randomBytes(8).toString('hex');
+    const uniqueName = `${timestamp}-${randomId}.webp`;
     const localPath = path.join(backupDir, uniqueName);
     fs.writeFileSync(localPath, processedBuffer);
 
-    // Upload to Cloudinary
+    // Upload to Cloudinary with timeout
     return await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -49,10 +62,12 @@ exports.uploadToCloudinary = async (fileBuffer, folder = 'agent-profiles', publi
           overwrite: publicId ? true : false,
           quality: 'auto',
           fetch_format: 'auto',
+          timeout: 60000, // 60 second timeout
         },
         (error, result) => {
           if (error) {
-            reject(error);
+            console.error('Cloudinary upload error:', error);
+            reject(new Error(`Cloudinary upload failed: ${error.message}`));
           } else {
             // attach localPath for callers if needed
             result.localPath = localPath;
@@ -61,9 +76,15 @@ exports.uploadToCloudinary = async (fileBuffer, folder = 'agent-profiles', publi
         }
       );
 
+      uploadStream.on('error', (error) => {
+        console.error('Upload stream error:', error);
+        reject(new Error(`Upload stream error: ${error.message}`));
+      });
+
       uploadStream.end(processedBuffer);
     });
   } catch (err) {
+    console.error('uploadToCloudinary error:', err.message);
     return Promise.reject(err);
   }
 };

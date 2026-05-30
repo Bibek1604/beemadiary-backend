@@ -168,8 +168,13 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
         updateData.profile_picture = cloudinaryResult.secure_url;
         updateData.profile_picture_public_id = cloudinaryResult.public_id;
       } catch (cloudinaryError) {
+        console.error('Image upload error in profile update:', cloudinaryError.message);
         return res.status(400).json(
-          ApiResponse.error("Image upload failed", null, 400)
+          ApiResponse.error(
+            `Image upload failed: ${cloudinaryError.message}`,
+            null,
+            400
+          )
         );
       }
     }
@@ -372,7 +377,14 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
         `agent-profile-${userId}`
       );
     } catch (cloudinaryError) {
-      throw new Error('Cloudinary upload failed');
+      console.error('Image upload error:', cloudinaryError.message);
+      return res.status(400).json(
+        ApiResponse.error(
+          `Image upload failed: ${cloudinaryError.message}`,
+          null,
+          400
+        )
+      );
     }
 
     // Store public_id and url in database

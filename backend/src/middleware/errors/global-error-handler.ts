@@ -11,7 +11,10 @@ import {
   ValidationError,
   DatabaseError,
   ConflictError,
+  AuthenticationError,
+  AuthorizationError,
   FileUploadError,
+  NotFoundError,
   TimeoutError,
   isAppError,
   ERROR_MESSAGES,
@@ -80,6 +83,36 @@ function classifyError(error: any, requestId: string): AppError {
   if (isAppError(error)) {
     error.requestId = requestId;
     return error;
+  }
+
+  const message = String(error?.message || '');
+
+  if (/invalid credentials|token has expired|invalid token|invalid refresh token/i.test(message)) {
+    return new AuthenticationError('Invalid credentials. Please try again.');
+  }
+
+  if (/user account is inactive|account is inactive|deactivated/i.test(message)) {
+    return new AuthorizationError('User account is inactive.');
+  }
+
+  if (/user already exists/i.test(message)) {
+    return new ConflictError('User already exists.');
+  }
+
+  if (/user not found/i.test(message)) {
+    return new NotFoundError('User');
+  }
+
+  if (/agent information not found/i.test(message)) {
+    return new NotFoundError('Agent information');
+  }
+
+  if (/current password is incorrect/i.test(message)) {
+    return new ValidationError('Current password is incorrect.');
+  }
+
+  if (/password is too weak|new password is too weak/i.test(message)) {
+    return new ValidationError(message || 'The password does not meet the required strength.');
   }
 
   // MongoDB errors
