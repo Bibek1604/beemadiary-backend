@@ -9,31 +9,51 @@ export class AuthRepository {
    * Get user by email
    */
   async getUserByEmail(email: string): Promise<any | null> {
-    return prisma.user.findUnique({
+    // Check admins collection first (for admin login)
+    let user = await prisma.admin.findUnique({
       where: { email },
     });
+
+    if (!user) {
+      // Fall back to user collection (for agent/client login)
+      user = await prisma.user.findUnique({
+        where: { email },
+      });
+    }
+
+    return user;
   }
 
   /**
    * Get user by ID with relations
    */
   async getUserById(id: string | number, includeRelations: boolean = false) {
-    if (includeRelations) {
-      return prisma.user.findUnique({
-        where: { id },
-        include: {
-          agents: true,
-          sessions: {
-            where: { is_active: true },
+    // Try admin collection first
+    let user = await prisma.admin.findUnique({
+      where: { id: String(id) },
+    });
+
+    if (!user) {
+      // Fall back to user collection
+      if (includeRelations) {
+        user = await prisma.user.findUnique({
+          where: { id },
+          include: {
+            agents: true,
+            sessions: {
+              where: { is_active: true },
+            },
+            account_lockout: true,
           },
-          account_lockout: true,
-        },
-      });
+        });
+      } else {
+        user = await prisma.user.findUnique({
+          where: { id },
+        });
+      }
     }
 
-    return prisma.user.findUnique({
-      where: { id },
-    });
+    return user;
   }
 
   /**

@@ -12,11 +12,11 @@ const swaggerOptions = {
     },
     servers: [
       {
-        url: process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : 'https://apit.beemadiary.com',
+        url: process.env.NODE_ENV === 'development' ? 'http://localhost:3001' : 'https://api.beemadiary.com',
         description: process.env.NODE_ENV === 'development' ? 'Development Server' : 'Production Server',
       },
       {
-        url: 'https://apit.beemadiary.com',
+        url: 'https://api.beemadiary.com',
         description: 'Production Server',
       },
     ],

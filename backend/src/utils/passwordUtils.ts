@@ -1,23 +1,29 @@
 import crypto from 'crypto';
+import bcryptjs from 'bcryptjs';
 
 export class PasswordUtils {
   /**
-   * Hash password using PBKDF2
+   * Hash password using bcrypt (preferred) or PBKDF2 (legacy)
    */
   static hashPassword(password: string): string {
-    const salt = crypto.randomBytes(32).toString('hex');
-    const hash = crypto
-      .pbkdf2Sync(password, salt, 100000, 64, 'sha512')
-      .toString('hex');
-    return `${salt}:${hash}`;
+    // Use bcrypt for new passwords
+    return bcryptjs.hashSync(password, 10);
   }
 
   /**
-   * Verify password against hash
+   * Verify password against hash (supports both bcrypt and PBKDF2)
    */
   static verifyPassword(password: string, hash: string): boolean {
     try {
+      // Check if it's a bcrypt hash
+      if (hash.startsWith('$2a') || hash.startsWith('$2b') || hash.startsWith('$2y')) {
+        return bcryptjs.compareSync(password, hash);
+      }
+      // Fall back to PBKDF2 for legacy hashes
       const [salt, originalHash] = hash.split(':');
+      if (!salt || !originalHash) {
+        return false;
+      }
       const computedHash = crypto
         .pbkdf2Sync(password, salt, 100000, 64, 'sha512')
         .toString('hex');

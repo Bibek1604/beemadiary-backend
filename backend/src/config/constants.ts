@@ -1,7 +1,10 @@
 export const CONSTANTS = {
   // JWT
   JWT_SECRET: process.env.JWT_SECRET || '',
+  JWT_REFRESH_SECRET: process.env.SESSION_SECRET || '',
   JWT_EXPIRY: process.env.JWT_EXPIRY || '7d',
+  ACCESS_TOKEN_EXPIRY: process.env.JWT_EXPIRES_IN || '24h',
+  REFRESH_TOKEN_EXPIRY: '7d',
 
   // Business Logic
   OVERDUE_THRESHOLD_DAYS: 0,
