@@ -4,9 +4,6 @@ import { AuthenticatedRequest, JWTPayload } from '../types';
 import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
 
-// ---------------------------------------------------------------------------
-// Internal helper — parse token from Authorization header and verify with secret
-// ---------------------------------------------------------------------------
 function extractAndVerify(
   req: AuthenticatedRequest,
   res: Response,
@@ -52,10 +49,6 @@ function extractAndVerify(
   }
 }
 
-/**
- * verifyToken — for agent / user routes.
- * Verifies with JWT_SECRET; only accepts tokens with type AGENT.
- */
 export const verifyToken = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   const decoded = extractAndVerify(req, res, CONSTANTS.JWT_SECRET, ['AGENT']);
   if (!decoded) return;
@@ -63,10 +56,6 @@ export const verifyToken = (req: AuthenticatedRequest, res: Response, next: Next
   next();
 };
 
-/**
- * verifyAdminToken — for admin routes.
- * Verifies with JWT_ADMIN_SECRET; only accepts tokens with type ADMIN / SUPER_ADMIN.
- */
 export const verifyAdminToken = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   const decoded = extractAndVerify(req, res, CONSTANTS.JWT_ADMIN_SECRET, ['ADMIN', 'SUPER_ADMIN']);
   if (!decoded) return;
@@ -74,11 +63,6 @@ export const verifyAdminToken = (req: AuthenticatedRequest, res: Response, next:
   next();
 };
 
-/**
- * verifyAnyToken — for shared routes accessible by both admins and agents.
- * Tries JWT_ADMIN_SECRET first (ADMIN/SUPER_ADMIN), then JWT_SECRET (AGENT).
- * Whichever verifies successfully wins — both token types are accepted.
- */
 export const verifyAnyToken = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -90,14 +74,12 @@ export const verifyAnyToken = (req: AuthenticatedRequest, res: Response, next: N
 
   const token = authHeader.substring(7);
 
-  // Try admin secret first
   try {
     const decoded = jwt.verify(token, CONSTANTS.JWT_ADMIN_SECRET) as JWTPayload;
     req.user = decoded;
     return next();
-  } catch { /* not an admin token — try agent */ }
+  } catch { /* not an admin token */ }
 
-  // Try agent secret
   try {
     const decoded = jwt.verify(token, CONSTANTS.JWT_SECRET) as JWTPayload;
     req.user = decoded;
@@ -115,18 +97,12 @@ export const verifyAnyToken = (req: AuthenticatedRequest, res: Response, next: N
   }
 };
 
-/**
- * Generate user/agent access token
- */
 export const generateToken = (payload: JWTPayload): string => {
   return jwt.sign(payload, CONSTANTS.JWT_SECRET, {
     expiresIn: CONSTANTS.ACCESS_TOKEN_EXPIRY as jwt.SignOptions['expiresIn'],
   });
 };
 
-/**
- * Generate admin access token
- */
 export const generateAdminToken = (payload: JWTPayload): string => {
   return jwt.sign(payload, CONSTANTS.JWT_ADMIN_SECRET, {
     expiresIn: CONSTANTS.JWT_ADMIN_EXPIRY as jwt.SignOptions['expiresIn'],

@@ -123,7 +123,6 @@ export const apiSecurityHeaders = (req: Request, res: Response, next: NextFuncti
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
-  res.setHeader('Content-Security-Policy', "default-src 'self'");
   next();
 };
 
@@ -141,9 +140,7 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction) =
       statusCode: res.statusCode,
       durationMs: duration,
       ip: req.ip,
-      userAgent: req.get('user-agent'),
     });
   });
-
   next();
 };

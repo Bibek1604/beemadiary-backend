@@ -234,4 +234,7 @@ router.delete("/admin/companies/:id", authenticateAdmin, authorize(["ADMIN"], ["
   }
 
   await prisma.company.update({ where: { id: req.params.id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
-  return res.status(200).json(ApiResponse.success("Company deleted 
+  return res.status(200).json(ApiResponse.success("Company deleted successfully", { id: req.params.id }));
+});
+
+module.exports = router;

@@ -602,14 +602,16 @@ const mongoPrisma = new Proxy(
         return undefined;
       }
 
-      if (!delegateCache.has(property)) {
-        delegateCache.set(property, new MongoDelegate(property));
+      if (delegateCache.has(property)) {
+        return delegateCache.get(property);
       }
 
-      return delegateCache.get(property);
+      const delegate = new MongoDelegate(property);
+      delegateCache.set(property, delegate);
+      return delegate;
     },
   }
-) as Record<string, any> & { $disconnect: () => Promise<void>; $connect: () => Promise<Db> };
+);
 
 export { MongoConnectionManager };
 export default mongoPrisma;

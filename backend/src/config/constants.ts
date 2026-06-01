@@ -8,17 +8,16 @@ export const CONSTANTS = {
   JWT_ADMIN_SECRET: process.env.JWT_ADMIN_SECRET || '',
   JWT_ADMIN_REFRESH_SECRET: process.env.JWT_ADMIN_REFRESH_SECRET || '',
   JWT_ADMIN_EXPIRY: process.env.JWT_ADMIN_EXPIRES_IN || '15m',
-  JWT_EXPIRY: process.env.JWT_EXPIRY || '15m', // kept for backward-compat
+  JWT_EXPIRY: process.env.JWT_EXPIRY || '15m',
 
   // Business Logic
   OVERDUE_THRESHOLD_DAYS: 0,
   LAPSED_POLICY_THRESHOLD_DAYS: 30,
   PAGINATION_LIMIT: 10,
-  
+
   // Rates
-  // Disabled for development - allows continuous testing without rate limit blocks
-  RATE_LIMIT_WINDOW: 15 * 60 * 1000, // 15 minutes
-  RATE_LIMIT_MAX_REQUESTS: process.env.NODE_ENV === 'development' ? 10000 : 100, // 10k for dev, 100 for prod
+  RATE_LIMIT_WINDOW: 15 * 60 * 1000,
+  RATE_LIMIT_MAX_REQUESTS: process.env.NODE_ENV === 'development' ? 10000 : 100,
 
   // Errors
   ERRORS: {

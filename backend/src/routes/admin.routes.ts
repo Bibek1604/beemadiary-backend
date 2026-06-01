@@ -1535,7 +1535,7 @@ router.post(
       include: { notification: true, agent: true },
     } as any);
 
-    return res.status(201).json(ResponseHandler.success('Achievement unlocked successfully', serializeUserAchievement(read)));
+    return res.status(201).json(ResponseHandler.success('Notification read', notificationRead));
   })
 );
 
