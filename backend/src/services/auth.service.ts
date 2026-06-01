@@ -80,25 +80,14 @@ export class AuthService {
       throw new Error('Invalid credentials');
     }
 
-    if (user.is_active === false) {
-      throw new Error('User account is inactive');
+    // Support both is_active (user model) and status (agent/admin model)
+    if (user.is_active === false || user.status === 'INACTIVE') {
+      throw new Error('Account is inactive. Please contact your admin.');
     }
 
-    const sessionExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    const session = await authRepository.createSession({
-      id: randomUUID(),
-      user_id: user.id,
-      user_type: user.role || 'AGENT',
-      token: randomUUID(),
-      expires_at: sessionExpiresAt,
-      ip_address: ipAddress,
-      user_agent: userAgent,
-      device_name: deviceName,
-      is_active: true,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-
+    // Generate tokens FIRST so the JWT can be stored as the session token.
+    // Previously the session was stored with randomUUID() which never matched
+    // the JWT the middleware looks up → "Session terminated" on every request.
     const payload = {
       id: user.id,
       email: user.email,
@@ -108,6 +97,28 @@ export class AuthService {
 
     const accessToken = TokenManager.generateAccessToken(payload as any);
     const refreshToken = TokenManager.generateRefreshToken(payload as any);
+
+    // Session expiry should match the JWT lifetime (24 h by default).
+    const jwtDuration: string = (process.env.JWT_EXPIRES_IN as string) || '24h';
+    let sessionExpiresMs = 24 * 60 * 60 * 1000;
+    if (jwtDuration.endsWith('h')) sessionExpiresMs = parseInt(jwtDuration, 10) * 60 * 60 * 1000;
+    else if (jwtDuration.endsWith('d')) sessionExpiresMs = parseInt(jwtDuration, 10) * 24 * 60 * 60 * 1000;
+    else if (jwtDuration.endsWith('m')) sessionExpiresMs = parseInt(jwtDuration, 10) * 60 * 1000;
+    const sessionExpiresAt = new Date(Date.now() + sessionExpiresMs);
+
+    const session = await authRepository.createSession({
+      id: randomUUID(),
+      user_id: user.id,
+      user_type: user.role || 'AGENT',
+      token: accessToken,          // ← store the JWT, not a random UUID
+      expires_at: sessionExpiresAt,
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      device_name: deviceName,
+      is_active: true,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
 
     await authRepository.createRefreshToken({
       id: randomUUID(),
@@ -127,9 +138,12 @@ export class AuthService {
       user: {
         id: user.id,
         email: user.email,
+        full_name: (user as any).full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim() || (user as any).username || '',
         firstName: user.first_name,
         lastName: user.last_name,
         role: user.role || 'AGENT',
+        status: ((user as any).status || (user.is_active ? 'ACTIVE' : 'INACTIVE')).toLowerCase(),
+        company_id: (user as any).company_id || null,
       },
       tokens: {
         accessToken,

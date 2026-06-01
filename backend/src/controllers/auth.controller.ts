@@ -122,20 +122,28 @@ export class AuthController {
       userAgent
     );
 
+    const accessToken = result.tokens.accessToken;
+    const refreshToken = result.tokens.refreshToken;
+
     // Set secure cookies
-    res.cookie('accessToken', result.tokens.accessToken, {
+    res.cookie('accessToken', accessToken, {
       ...cookieOptions,
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     });
 
-    res.cookie('refreshToken', result.tokens.refreshToken, {
+    res.cookie('refreshToken', refreshToken, {
       ...cookieOptions,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
-    return res.status(CONSTANTS.STATUS_CODES.OK).json(
-      ResponseHandler.success('Agent login successful', result)
-    );
+    // Return token at top level so the frontend can read it from response.data.token
+    return res.status(CONSTANTS.STATUS_CODES.OK).json({
+      success: true,
+      status: true,
+      message: 'Login successful',
+      token: accessToken,
+      data: (result as any).user || {},
+    });
   });
 
   /**
@@ -169,10 +177,11 @@ export class AuthController {
   refreshToken = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const { refreshToken } = req.body;
     const refreshTokenFromCookie = (req as any).cookies?.refreshToken;
+    const refreshTokenFromHeader = req.get('x-refresh-token') || req.get('authorization')?.replace(/^Bearer\s+/i, '');
     const ipAddress = req.ip || 'unknown';
     const userAgent = req.get('user-agent') || 'unknown';
 
-    const tokenToUse = refreshToken || refreshTokenFromCookie;
+    const tokenToUse = refreshTokenFromHeader || refreshToken || refreshTokenFromCookie;
 
     if (!tokenToUse) {
       return res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(

@@ -4,9 +4,6 @@ import { verifyToken } from '../middleware/auth';
 import { validateBody } from '../middleware/validation';
 import { z } from 'zod';
 
-// JS controller that works with the actual admin/agent DB tables
-const jsAuthController = require('../controllers/auth.controller.js');
-
 const router = Router();
 
 // Validation schemas
@@ -61,20 +58,22 @@ router.post(
 
 /**
  * POST /api/auth/admin/login
- * Admin login (used by admin panel) - uses JS controller with admin DB table
+ * Admin login (used by admin panel)
  */
 router.post(
   '/admin/login',
-  jsAuthController.adminLogin
+  validateBody(loginSchema),
+  authController.login
 );
 
 /**
  * POST /api/auth/agent/login
- * Agent login (used by agent app) - uses JS controller with agent DB table
+ * Agent login (used by agent app)
  */
 router.post(
   '/agent/login',
-  jsAuthController.agentLogin
+  validateBody(loginSchema),
+  authController.agentLogin
 );
 
 /**

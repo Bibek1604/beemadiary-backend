@@ -51,6 +51,32 @@ const authenticate = async (req, res, next) => {
       );
     }
 
+    // Verify the account still exists and is active (catches deleted/deactivated agents)
+    const userType = decoded.type || decoded.role;
+    let accountActive = true;
+
+    if (userType === "AGENT") {
+      const agent = await prisma.agent.findFirst({
+        where: { id: decoded.id, deleted_at: null, status: "ACTIVE" },
+        select: { id: true },
+      });
+      accountActive = !!agent;
+    } else if (userType === "ADMIN" || userType === "SUPER_ADMIN") {
+      const admin = await prisma.admin.findFirst({
+        where: { id: decoded.id, deleted_at: null, status: "ACTIVE" },
+        select: { id: true },
+      });
+      accountActive = !!admin;
+    }
+
+    if (!accountActive) {
+      // Purge the session so the token stops working entirely
+      prisma.session.delete({ where: { token } }).catch(() => {});
+      return res.status(401).json(
+        ApiResponse.error("Account deactivated", ["Your account has been deactivated or deleted. Please contact your administrator."], 401)
+      );
+    }
+
     // Attach decoded user and token details to request
     req.user = {
       id: decoded.id,

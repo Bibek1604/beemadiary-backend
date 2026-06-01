@@ -10,18 +10,26 @@ export class AuthRepository {
    */
   async getUserByEmail(email: string): Promise<any | null> {
     // Check admins collection first (for admin login)
-    let user = await prisma.admin.findUnique({
-      where: { email },
+    const admin = await prisma.admin.findFirst({
+      where: { email, deleted_at: null },
     });
-
-    if (!user) {
-      // Fall back to user collection (for agent/client login)
-      user = await prisma.user.findUnique({
-        where: { email },
-      });
+    if (admin) {
+      return { ...admin, role: 'ADMIN', type: 'ADMIN' };
     }
 
-    return user;
+    // Check agent collection (agents created by admin from admin panel)
+    const agent = await prisma.agent.findFirst({
+      where: { email, deleted_at: null },
+    });
+    if (agent) {
+      return { ...agent, role: 'AGENT', type: 'AGENT' };
+    }
+
+    // Fall back to user collection (legacy / other user types)
+    const user = await prisma.user.findFirst({
+      where: { email },
+    });
+    return user ?? null;
   }
 
   /**

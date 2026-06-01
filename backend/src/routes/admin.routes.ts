@@ -559,6 +559,11 @@ router.post(
       }),
     ]);
 
+    // If deactivating, purge all sessions for those users immediately
+    if (!isActive) {
+      prisma.session.deleteMany({ where: { user_id: { in: ids } } }).catch(() => {});
+    }
+
     return res.status(200).json(ResponseHandler.success('Users updated successfully', { ids, is_active: isActive }));
   })
 );
@@ -692,6 +697,11 @@ router.post(
   imageHandler.createUploadMiddleware('documents').single('image'),
   asyncHandler(async (req: any, res: Response) => {
     const imageUrl = req.file ? (await imageHandler.uploadImage(req.file.path, 'agents')).url : undefined;
+    const password = normalizeText(req.body.password);
+
+    if (!password) {
+      return res.status(400).json(ResponseHandler.validationError([{ field: 'password', message: 'Password is required' }]));
+    }
 
     const agent = await prisma.agent.create({
       data: {
@@ -699,7 +709,7 @@ router.post(
         full_name: normalizeText(req.body.full_name || `${req.body.first_name || ''} ${req.body.last_name || ''}`),
         email: normalizeText(req.body.email),
         phone_number: normalizeText(req.body.phone_number),
-        password_hash: PasswordUtils.hashPassword(normalizeText(req.body.password || 'ChangeMe123!')),
+        password_hash: PasswordUtils.hashPassword(password),
         lic_agent_code: normalizeText(req.body.lic_agent_code),
         branch_division: normalizeText(req.body.branch_division),
         qualification: normalizeText(req.body.qualification),
@@ -764,6 +774,9 @@ router.delete(
       where: { id: req.params.id },
       data: { deleted_at: new Date(), status: 'INACTIVE' },
     });
+
+    // Invalidate all active sessions so the agent is logged out immediately
+    prisma.session.deleteMany({ where: { user_id: req.params.id } }).catch(() => {});
 
     return res.status(200).json(ResponseHandler.success('Agent deleted successfully', { id: req.params.id }));
   })

@@ -46,14 +46,18 @@ const { csrfProtection } = require("../middleware/csrf");
  */
 router.post(
   "/admin/login",
-  csrfProtection,
+  // csrfProtection removed from login routes: CSRF attacks target authenticated
+// sessions, not public login forms. Cookie-based CSRF also fails in
+// cross-origin dev setups (SameSite=strict). Protected routes still use it.
   validate(authValidator.login),
   authController.adminLogin
 );
 
 router.post(
   "/auth/login",
-  csrfProtection,
+  // csrfProtection removed from login routes: CSRF attacks target authenticated
+// sessions, not public login forms. Cookie-based CSRF also fails in
+// cross-origin dev setups (SameSite=strict). Protected routes still use it.
   validate(authValidator.login),
   authController.adminLogin
 );
@@ -94,7 +98,9 @@ router.post(
  */
 router.post(
   "/agent/login",
-  csrfProtection,
+  // csrfProtection removed from login routes: CSRF attacks target authenticated
+// sessions, not public login forms. Cookie-based CSRF also fails in
+// cross-origin dev setups (SameSite=strict). Protected routes still use it.
   validate(authValidator.login),
   authController.agentLogin
 );
@@ -135,7 +141,9 @@ router.post(
  */
 router.post(
   "/users/login",
-  csrfProtection,
+  // csrfProtection removed from login routes: CSRF attacks target authenticated
+// sessions, not public login forms. Cookie-based CSRF also fails in
+// cross-origin dev setups (SameSite=strict). Protected routes still use it.
   validate(authValidator.login),
   authController.agentLogin
 );

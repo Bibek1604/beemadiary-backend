@@ -356,18 +356,23 @@ router.delete("/users/:id", async (req, res) => {
     const admin = await prisma.admin.findUnique({ where: { id } });
     if (admin && !admin.deleted_at) {
       await prisma.admin.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+      // Invalidate all active sessions so the admin is logged out immediately
+      prisma.session.deleteMany({ where: { user_id: id } }).catch(() => {});
       return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
     }
 
     const agent = await prisma.agent.findUnique({ where: { id }, select: { id: true, deleted_at: true } });
     if (agent && !agent.deleted_at) {
       await prisma.agent.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+      // Invalidate all active sessions so the agent is logged out immediately
+      prisma.session.deleteMany({ where: { user_id: id } }).catch(() => {});
       return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
     }
 
     const client = await prisma.client.findUnique({ where: { id } });
     if (client && !client.deleted_at) {
       await prisma.client.update({ where: { id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
+      prisma.session.deleteMany({ where: { user_id: id } }).catch(() => {});
       return res.status(200).json(ApiResponse.success("User deleted successfully", { id }));
     }
 
