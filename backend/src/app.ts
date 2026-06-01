@@ -13,7 +13,6 @@ import {
 } from './middleware/security';
 import { sanitizeRequest } from './middleware/validation';
 import { notFoundHandler } from './middleware/errorHandler';
-import { setCSRFToken, csrfProtection } from './middleware/csrf';
 import imageHandler from './utils/imageHandler';
 import dashboardRoutes from './routes/dashboard.routes';
 import authRoutes from './routes/auth.routes';
@@ -56,6 +55,11 @@ app.use((req: any, res: Response, next: NextFunction) => {
 // Middleware - Security & Body Parsing
 app.use(securityHeaders);
 app.use(corsConfig);
+// Allow cross-origin loading of images and other resources
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+});
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -86,14 +90,6 @@ app.get('/health', (_req: Request, res: Response) => {
   });
 });
 
-// CSRF Token Route - for initial token retrieval
-app.get('/api/csrf-token', setCSRFToken, (req: Request, res: Response) => {
-  res.status(200).json({
-    message: 'CSRF token generated',
-    csrfToken: (req as any).cookies?.['csrf-token'],
-  });
-});
-
 // API Routes - JS auth routes first (admin/agent login that works with actual DB tables)
 app.use('/api', jsAuthRoutes);
 app.use('/api/admin', adminCompatRoutes);
@@ -101,7 +97,7 @@ app.use('/api/admin', adminCompatRoutes);
 // app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/images', imagesRoutes);
-app.use('/api/user-panel', csrfProtection, dashboardRoutes);
+app.use('/api/user-panel', dashboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', notesRoutes);
 app.use('/api', targetsRoutes);

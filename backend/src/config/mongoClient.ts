@@ -430,9 +430,14 @@ class MongoDelegate {
 
   async update(options: { where: MongoWhere; data: Record<string, any> }) {
     const collection = await this.collection();
+    // Strip undefined values before $set — MongoDB treats undefined as null
+    // which would overwrite existing fields with null on every update.
+    const cleanData = Object.fromEntries(
+      Object.entries(options.data).filter(([, v]) => v !== undefined)
+    );
     const raw = await collection.findOneAndUpdate(
       toMongoFilter(options.where),
-      { $set: { ...options.data, updated_at: new Date() } },
+      { $set: { ...cleanData, updated_at: new Date() } },
       { returnDocument: 'after' }
     );
 
@@ -449,7 +454,10 @@ class MongoDelegate {
 
   async updateMany(options: { where?: MongoWhere; data: Record<string, any> }) {
     const collection = await this.collection();
-    return collection.updateMany(toMongoFilter(options.where || {}), { $set: { ...options.data, updated_at: new Date() } });
+    const cleanData = Object.fromEntries(
+      Object.entries(options.data).filter(([, v]) => v !== undefined)
+    );
+    return collection.updateMany(toMongoFilter(options.where || {}), { $set: { ...cleanData, updated_at: new Date() } });
   }
 
   async delete(options: { where: MongoWhere }) {

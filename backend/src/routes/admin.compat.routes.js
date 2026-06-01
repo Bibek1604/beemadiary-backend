@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const { prisma } = require("../config/db");
-const authenticate = require("../middlewares/auth.middleware");
+const { authenticateAdmin } = require("../middlewares/auth.middleware");
 const authorize = require("../middlewares/rbac.middleware");
 const ApiResponse = require("../utils/apiResponse");
 
@@ -95,7 +95,8 @@ const getFirstAgentId = async () => {
   return agent?.id || null;
 };
 
-router.use(authenticate, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]));
+// authenticateAdmin verifies with JWT_ADMIN_SECRET — only admin tokens accepted
+router.use(authenticateAdmin, authorize(["ADMIN"], ["SUPER_ADMIN", "ADMIN"]));
 
 router.get("/users", async (_req, res) => {
   try {
@@ -401,32 +402,8 @@ router.get("/companies/:id", async (req, res) => {
   }
 });
 
-router.patch("/companies/:id", async (req, res) => {
-  try {
-    const company = await prisma.company.findUnique({ where: { id: req.params.id } });
-    if (!company || company.deleted_at) return res.status(404).json(ApiResponse.error("Company not found", "The company you are looking for does not exist or has been deleted."));
-
-    const updated = await prisma.company.update({
-      where: { id: req.params.id },
-      data: {
-        name: req.body.name ?? undefined,
-        email: req.body.email ?? undefined,
-        phone_number: req.body.phone_number ?? undefined,
-        image: req.body.image ?? undefined,
-        status: req.body.status === undefined ? undefined : normalizeStatus(req.body.status),
-      },
-    });
-
-    return res.status(200).json(ApiResponse.success("Company updated successfully", serializeCompany(updated)));
-  } catch (error) {
-    if (error.code === 'P2002') {
-      const field = error.meta?.target?.[0] || 'field';
-      const fieldLabel = field === 'email' ? 'Email' : field === 'phone_number' ? 'Phone number' : field === 'name' ? 'Name' : field;
-      return res.status(400).json(ApiResponse.error(`${fieldLabel} already exists`));
-    }
-    return res.status(500).json(ApiResponse.error("Could not update company"));
-  }
-});
+// PATCH /companies/:id — intentionally removed from compat router.
+// Falls through to admin.routes.ts which has full multipart/image support.
 
 router.delete("/companies/:id", async (req, res) => {
   try {
@@ -437,6 +414,85 @@ router.delete("/companies/:id", async (req, res) => {
     return res.status(200).json(ApiResponse.success("Company deleted successfully", { id: req.params.id }));
   } catch (error) {
     return res.status(500).json(ApiResponse.error("Could not delete company"));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/dashboard-overview/
+// Summary stats for the admin dashboard
+// ---------------------------------------------------------------------------
+router.get("/dashboard-overview", async (_req, res) => {
+  try {
+    const [admins, agents, clients, companies, policies, transactions] = await Promise.all([
+      prisma.admin.count({ where: { deleted_at: null } }).catch(() => 0),
+      prisma.agent.count({ where: { deleted_at: null } }).catch(() => 0),
+      prisma.client.count({ where: { deleted_at: null } }).catch(() => 0),
+      prisma.company.count({ where: { deleted_at: null } }).catch(() => 0),
+      prisma.policy  ? prisma.policy.count({ where: { deleted_at: null } }).catch(() => 0)      : Promise.resolve(0),
+      prisma.transaction ? prisma.transaction.count({ where: { deleted_at: null } }).catch(() => 0) : Promise.resolve(0),
+    ]);
+
+    const total_members = admins + agents + clients;
+
+    return res.status(200).json(ApiResponse.success("Dashboard overview fetched successfully", {
+      summary: {
+        total_members,
+        active_members:   total_members,
+        inactive_members: 0,
+        lapsed_policies:  Math.max(policies - transactions, 0),
+        overdue_premiums: 0,
+        unread_alerts:    0,
+      },
+      total_users:     clients,
+      total_agents:    agents,
+      total_companies: companies,
+      total_policies:  policies,
+      birthdays:              [],
+      recent_alerts:          [],
+      recent_notifications:   [],
+      achievements:           [],
+      payments_due:           [],
+      targets:                [],
+      notification_breakdown: [],
+      visualizations: {
+        gender_breakdown:    [],
+        why_bought_breakdown:[],
+      },
+    }));
+  } catch (error) {
+    return res.status(500).json(ApiResponse.error("Could not fetch dashboard overview"));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/audit-logs/
+// Recent admin action audit logs, newest first (max 100)
+// ---------------------------------------------------------------------------
+router.get("/audit-logs", async (req, res) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit  || "50",  10), 100);
+    const offset = Math.max(parseInt(req.query.offset || "0",   10), 0);
+
+    const logs = await prisma.auditLog.findMany({
+      orderBy: { created_at: "desc" },
+      skip:  offset,
+      take:  limit,
+    }).catch(() => []);
+
+    return res.status(200).json(ApiResponse.success("Audit logs fetched successfully", {
+      count:   logs.length,
+      results: logs.map((log) => ({
+        id:             log.id,
+        admin_user:     log.user_id   ?? null,
+        admin_username: log.user_id   ?? "system",
+        action:         log.action    ?? "",
+        details:        typeof log.details === "object" ? JSON.stringify(log.details) : (log.details ?? ""),
+        timestamp:      log.created_at ? new Date(log.created_at).toISOString() : new Date().toISOString(),
+        ip_address:     log.ip_address ?? null,
+      })),
+    }));
+  } catch (error) {
+    return res.status(500).json(ApiResponse.error("Could not fetch audit logs"));
   }
 });
 

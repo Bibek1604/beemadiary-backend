@@ -1,10 +1,14 @@
 export const CONSTANTS = {
-  // JWT
+  // JWT — user / agent tokens
   JWT_SECRET: process.env.JWT_SECRET || '',
-  JWT_REFRESH_SECRET: process.env.SESSION_SECRET || '',
-  JWT_EXPIRY: process.env.JWT_EXPIRY || '7d',
-  ACCESS_TOKEN_EXPIRY: process.env.JWT_EXPIRES_IN || '24h',
-  REFRESH_TOKEN_EXPIRY: '7d',
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || '',
+  ACCESS_TOKEN_EXPIRY: process.env.JWT_EXPIRES_IN || '15m',
+  REFRESH_TOKEN_EXPIRY: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+  // JWT — admin tokens (separate secrets: admin tokens cannot be used on user routes)
+  JWT_ADMIN_SECRET: process.env.JWT_ADMIN_SECRET || '',
+  JWT_ADMIN_REFRESH_SECRET: process.env.JWT_ADMIN_REFRESH_SECRET || '',
+  JWT_ADMIN_EXPIRY: process.env.JWT_ADMIN_EXPIRES_IN || '15m',
+  JWT_EXPIRY: process.env.JWT_EXPIRY || '15m', // kept for backward-compat
 
   // Business Logic
   OVERDUE_THRESHOLD_DAYS: 0,

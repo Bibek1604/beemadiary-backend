@@ -7,20 +7,13 @@ import { CONSTANTS } from '../config/constants';
 const logger = require('../utils/logger');
 
 /**
- * Apply helmet security headers
+ * Apply helmet security headers — CSP disabled, CORP set to cross-origin
+ * so images and assets load across origins without browser policy errors.
  */
 export const securityHeaders = helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "https://cdn.jsdelivr.net", "https://cdnjs.cloudflare.com"],
-      scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
-      imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'", "https://api.cloudinary.com"],
-      fontSrc: ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
-    },
-  },
+  contentSecurityPolicy:    false,
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 });
 
 /**
@@ -28,32 +21,43 @@ export const securityHeaders = helmet({
  */
 export const corsConfig = cors({
   origin: function (origin, callback) {
-    const allowedOrigins = (process.env.CORS_ORIGIN || process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:5175')
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    const allowedOrigins = (
+      process.env.CORS_ORIGIN ||
+      process.env.CORS_ALLOWED_ORIGINS ||
+      'http://localhost:3000,http://localhost:3001,http://localhost:5173,http://localhost:5174,http://localhost:5175'
+    )
       .split(',')
       .map((o) => o.trim())
       .filter(Boolean);
 
-    // Allow requests with no origin (like mobile apps, curl, postman)
+    // Allow requests with no origin (mobile apps, curl, Postman, server-to-server)
     if (!origin) return callback(null, true);
 
-    // Check if origin is in allowed list
+    // In production: block any plain HTTP origin — forces HTTPS everywhere
+    if (isProduction && origin.startsWith('http://')) {
+      logger.warn('[CORS] BLOCKED plain HTTP origin in production', { origin });
+      return callback(new Error('HTTP origins are not allowed in production. Use HTTPS.'));
+    }
+
+    // Check explicit allowlist
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    // Allow localhost origins in development (but still validate)
-    if (process.env.NODE_ENV === 'development' && origin?.startsWith('http://localhost')) {
+    // Development only: allow any localhost regardless of port
+    if (!isProduction && origin.startsWith('http://localhost')) {
       return callback(null, true);
     }
 
-    // Even in development, enforce CORS - don't allow unvalidated origins
     logger.warn('[CORS] BLOCKED non-allowlisted origin', { origin, allowedOrigins });
     return callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  credentials: true,
+  credentials: false, // tokens are in Authorization header, not cookies
   optionsSuccessStatus: 200,
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-csrf-token', 'X-CSRF-Token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-refresh-token'],
 });
 
 /**

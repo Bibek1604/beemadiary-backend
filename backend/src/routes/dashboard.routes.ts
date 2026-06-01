@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { dashboardController } from '../controllers/dashboard.controller';
-import { verifyToken } from '../middleware/auth';
+import { verifyAnyToken } from '../middleware/auth';
 import { requireRole } from '../middleware/rbac';
 import { asyncHandler } from '../middleware/asyncHandler';
 
@@ -12,8 +12,7 @@ const router = Router();
  */
 router.get(
   '/dashboard-overview',
-  verifyToken,
-  requireRole('ADMIN', 'AGENT', 'USER'),
+  verifyAnyToken,  // accepts both admin (JWT_ADMIN_SECRET) and agent (JWT_SECRET) tokens
   asyncHandler((req, res) => dashboardController.getDashboardOverview(req, res))
 );
 

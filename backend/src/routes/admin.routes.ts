@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import prisma from '../config/database';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { verifyToken } from '../middleware/auth';
+import { verifyAdminToken } from '../middleware/auth';
 import { requireAdmin } from '../middleware/rbac';
 import { ResponseHandler } from '../utils/errorResponse';
 import imageHandler from '../utils/imageHandler';
@@ -23,7 +23,8 @@ const TransactionType = { PREMIUM_PAYMENT: 'PREMIUM_PAYMENT', CLAIM_PAYOUT: 'CLA
 
 const router = Router();
 
-router.use(verifyToken, requireAdmin);
+// verifyAdminToken uses JWT_ADMIN_SECRET — admin tokens only, never interchangeable with user tokens
+router.use(verifyAdminToken, requireAdmin);
 
 const toIso = (value: Date | string | null | undefined) =>
   value ? new Date(value).toISOString() : null;

@@ -3,95 +3,137 @@ const env = require("../config/env");
 const { prisma } = require("../config/db");
 const ApiResponse = require("../utils/apiResponse");
 
-/**
- * Authentication Middleware
- * Verifies JWT signature and checks for an active session in the database
- */
+// ---------------------------------------------------------------------------
+// Shared helper — extracts token, verifies with given secret, checks session
+// ---------------------------------------------------------------------------
+async function verifyRequest(req, res, secret, allowedTypes) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json(
+      ApiResponse.error("Unauthorized access", ["Access token is missing or malformed"], 401)
+    );
+    return null;
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  // 1. Verify JWT signature + expiry
+  let decoded;
+  try {
+    decoded = jwt.verify(token, secret);
+  } catch {
+    res.status(401).json(
+      ApiResponse.error("Unauthorized access", ["The access token is invalid or has expired"], 401)
+    );
+    return null;
+  }
+
+  // 2. Enforce token type (prevents admin tokens on agent routes and vice-versa)
+  const userType = decoded.type || decoded.role;
+  if (allowedTypes && !allowedTypes.includes(userType)) {
+    res.status(403).json(
+      ApiResponse.error("Forbidden", ["This token is not authorised for this endpoint"], 403)
+    );
+    return null;
+  }
+
+  // 3. Check active session in DB
+  const session = await prisma.session.findFirst({
+    where: { token },
+    select: { id: true, expires_at: true },
+  });
+
+  if (!session) {
+    res.status(401).json(
+      ApiResponse.error("Session terminated", ["Session is invalid or has been logged out"], 401)
+    );
+    return null;
+  }
+
+  if (new Date() > new Date(session.expires_at)) {
+    prisma.session.deleteMany({ where: { token } }).catch(() => {});
+    res.status(401).json(
+      ApiResponse.error("Session expired", ["Your session has expired. Please log in again"], 401)
+    );
+    return null;
+  }
+
+  // 4. Verify account still active
+  let accountActive = true;
+  if (userType === "AGENT") {
+    const agent = await prisma.agent.findFirst({
+      where: { id: decoded.id, deleted_at: null, status: "ACTIVE" },
+      select: { id: true },
+    });
+    accountActive = !!agent;
+  } else if (userType === "ADMIN" || userType === "SUPER_ADMIN") {
+    const admin = await prisma.admin.findFirst({
+      where: { id: decoded.id, deleted_at: null, status: "ACTIVE" },
+      select: { id: true },
+    });
+    accountActive = !!admin;
+  }
+
+  if (!accountActive) {
+    prisma.session.deleteMany({ where: { token } }).catch(() => {});
+    res.status(401).json(
+      ApiResponse.error(
+        "Account deactivated",
+        ["Your account has been deactivated or deleted. Please contact your administrator."],
+        401
+      )
+    );
+    return null;
+  }
+
+  return { decoded, token };
+}
+
+// ---------------------------------------------------------------------------
+// authenticate — for AGENT / user routes
+// Verifies with JWT_SECRET; only accepts tokens with type AGENT
+// ---------------------------------------------------------------------------
 const authenticate = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json(
-        ApiResponse.error("Unauthorized access", ["Access token is missing or malformed"], 401)
-      );
-    }
+    const result = await verifyRequest(req, res, env.JWT_SECRET, ["AGENT"]);
+    if (!result) return;
 
-    const token = authHeader.split(" ")[1];
-
-    // Verify JWT signature
-    let decoded;
-    try {
-      decoded = jwt.verify(token, env.JWT_SECRET);
-    } catch (err) {
-      return res.status(401).json(
-        ApiResponse.error("Unauthorized access", ["The access token is invalid or has expired"], 401)
-      );
-    }
-
-    // Verify session existence in database
-    const session = await prisma.session.findUnique({
-      where: { token },
-      select: {
-        id: true,
-        expires_at: true,
-      },
-    });
-
-    if (!session) {
-      return res.status(401).json(
-        ApiResponse.error("Session terminated", ["Session is invalid or has been logged out"], 401)
-      );
-    }
-
-    if (new Date() > session.expires_at) {
-      // Clean up expired session in database asynchronously
-      prisma.session.delete({ where: { token } }).catch(() => {});
-      return res.status(401).json(
-        ApiResponse.error("Session expired", ["Your session has expired. Please log in again"], 401)
-      );
-    }
-
-    // Verify the account still exists and is active (catches deleted/deactivated agents)
-    const userType = decoded.type || decoded.role;
-    let accountActive = true;
-
-    if (userType === "AGENT") {
-      const agent = await prisma.agent.findFirst({
-        where: { id: decoded.id, deleted_at: null, status: "ACTIVE" },
-        select: { id: true },
-      });
-      accountActive = !!agent;
-    } else if (userType === "ADMIN" || userType === "SUPER_ADMIN") {
-      const admin = await prisma.admin.findFirst({
-        where: { id: decoded.id, deleted_at: null, status: "ACTIVE" },
-        select: { id: true },
-      });
-      accountActive = !!admin;
-    }
-
-    if (!accountActive) {
-      // Purge the session so the token stops working entirely
-      prisma.session.delete({ where: { token } }).catch(() => {});
-      return res.status(401).json(
-        ApiResponse.error("Account deactivated", ["Your account has been deactivated or deleted. Please contact your administrator."], 401)
-      );
-    }
-
-    // Attach decoded user and token details to request
     req.user = {
-      id: decoded.id,
-      email: decoded.email,
-      role: decoded.role, // e.g., 'ADMIN', 'SUPER_ADMIN', or null
-      type: decoded.type, // 'ADMIN', 'AGENT', 'CLIENT'
+      id:    result.decoded.id,
+      email: result.decoded.email,
+      role:  result.decoded.role,
+      type:  result.decoded.type,
+      company_id: result.decoded.company_id,
     };
-    req.token = token;
-
+    req.token = result.token;
     next();
-  } catch (error) {
-    return res.status(500).json(
-      ApiResponse.error("Something went wrong. Please try again later.")
-    );
+  } catch {
+    res.status(500).json(ApiResponse.error("Something went wrong. Please try again later."));
+  }
+};
+
+// ---------------------------------------------------------------------------
+// authenticateAdmin — for ADMIN routes
+// Verifies with JWT_ADMIN_SECRET; only accepts tokens with type ADMIN / SUPER_ADMIN
+// ---------------------------------------------------------------------------
+const authenticateAdmin = async (req, res, next) => {
+  try {
+    const result = await verifyRequest(req, res, env.JWT_ADMIN_SECRET, ["ADMIN", "SUPER_ADMIN"]);
+    if (!result) return;
+
+    req.user = {
+      id:    result.decoded.id,
+      email: result.decoded.email,
+      role:  result.decoded.role,
+      type:  result.decoded.type,
+    };
+    req.token = result.token;
+    next();
+  } catch {
+    res.status(500).json(ApiResponse.error("Something went wrong. Please try again later."));
   }
 };
 
 module.exports = authenticate;
+module.exports.authenticate      = authenticate;
+module.exports.authenticateAdmin = authenticateAdmin;

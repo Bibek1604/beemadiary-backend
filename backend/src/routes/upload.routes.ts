@@ -3,7 +3,6 @@ import path from 'path';
 import fs from 'fs';
 import { verifyToken } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
-import { csrfProtection } from '../middleware/csrf';
 import imageHandler from '../utils/imageHandler';
 import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
@@ -35,7 +34,7 @@ const router = Router();
 router.post(
   '/profile-picture',
   verifyToken,
-  csrfProtection,
+  
   imageHandler.createUploadMiddleware('profile-pics').single('file'),
   asyncHandler(async (req: any, res: Response) => {
     if (!req.file) {
@@ -97,7 +96,7 @@ router.post(
 router.post(
   '/document',
   verifyToken,
-  csrfProtection,
+  
   imageHandler.createUploadMiddleware('documents').single('file'),
   asyncHandler(async (req: any, res: Response) => {
     if (!req.file) {
@@ -239,7 +238,7 @@ router.get(
 router.delete(
   '/:folder/:filename',
   verifyToken,
-  csrfProtection,
+  
   asyncHandler(async (req: any, res: Response) => {
     const { folder, filename } = req.params;
 
@@ -289,7 +288,7 @@ router.delete(
 router.post(
   '/bulk',
   verifyToken,
-  csrfProtection,
+  
   imageHandler.createUploadMiddleware('documents').array('files', 10),
   asyncHandler(async (req: any, res: Response) => {
     if (!req.files || req.files.length === 0) {
@@ -355,7 +354,7 @@ router.post(
 router.post(
   '/from-url',
   verifyToken,
-  csrfProtection,
+  
   asyncHandler(async (req: any, res: Response) => {
     const { url, folder = 'documents' } = req.body;
 
