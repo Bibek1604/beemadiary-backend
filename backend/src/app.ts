@@ -28,7 +28,10 @@ import policyRoutes from './routes/policy.routes';
 import policyBankDetailsRoutes from './routes/policyBankDetails.routes';
 import agentProfileRoutes from './routes/agentProfile.routes';
 import analyticsRoutes from './routes/analytics.routes';
-import dashboardLegacyRoutes from './routes/dashboard.routes.js';
+// dashboard-agent.routes.js — legacy agent dashboard (/api/dashboard-overview/)
+// Renamed from dashboard.routes.js to avoid naming collision with dashboard.routes.ts,
+// which TypeScript compiles to the same dist/routes/dashboard.routes.js filename.
+const dashboardLegacyRoutes = require('./routes/dashboard-agent.routes.js');
 import agentNotificationRoutes from './routes/agentNotification.routes';
 import swaggerOptions from './docs/swagger-complete';
 import { globalErrorHandler } from './middleware/errors/global-error-handler';

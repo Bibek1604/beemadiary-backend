@@ -19,10 +19,10 @@ server {
   include /etc/letsencrypt/options-ssl-nginx.conf;
   ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-  # Serve uploaded files directly from disk for speed
-  # Point this to the absolute path of the backend uploads folder
-  location /uploads/ {
-    alias /var/www/dashboard/uploads/;   # <-- update to your app's uploads path
+  # Serve uploaded files directly from disk for speed.
+  # Backend registers this route as /api/uploads/ — match that prefix here.
+  location /api/uploads/ {
+    alias /var/www/dashboard/uploads/;   # <-- absolute path to backend/backend/uploads/
     access_log off;
     expires 30d;
     add_header Cache-Control "public";
@@ -35,7 +35,7 @@ server {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_pass http://127.0.0.1:3000;  # backend listening address
+    proxy_pass http://127.0.0.1:3001;  # backend listening address (PORT=3001 in .env)
     proxy_read_timeout 90;
     proxy_buffering off;
   }

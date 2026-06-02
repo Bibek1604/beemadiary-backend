@@ -164,7 +164,7 @@ export const uploadImage = async (
     }
 
     // Process image: convert to optimized WEBP and optionally resize
-    const buffer = fs.readFileSync(filePath);
+    const buffer = await fs.promises.readFile(filePath);
     let processedBuffer = buffer;
 
     try {
@@ -188,7 +188,7 @@ export const uploadImage = async (
     const savedFilePath = path.join(uploadDir, uniqueFileName);
 
     // Save optimized file permanently as backup
-    fs.writeFileSync(savedFilePath, processedBuffer);
+    await fs.promises.writeFile(savedFilePath, processedBuffer);
 
     const metadata = await getImageMetadata(savedFilePath);
 
@@ -290,7 +290,7 @@ export const uploadImageFromBuffer = async (
     // Create secure filename with .webp
     const uniqueFileName = `${folder}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}.webp`;
     const filePath = path.join(uploadDir, uniqueFileName);
-    fs.writeFileSync(filePath, processedBuffer);
+    await fs.promises.writeFile(filePath, processedBuffer);
 
     const metadata = await getImageMetadata(filePath);
 

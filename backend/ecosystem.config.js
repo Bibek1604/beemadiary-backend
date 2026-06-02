@@ -7,9 +7,11 @@ module.exports = {
     {
       name: 'dashboard-overview-api',
       script: './dist/server.js',
-      // Use cluster mode to take advantage of multiple CPU cores
-      instances: 'max',
-      exec_mode: 'cluster',
+      // Absolute path so PM2 resolves script/logs correctly regardless of cwd
+      cwd: __dirname,
+      // Use fork mode to avoid memory-store sharing issues with rate limiters
+      instances: 1,
+      exec_mode: 'fork',
       watch: false,
       max_memory_restart: '300M',
       // Logs (PM2 will still manage own logs under ~/.pm2/logs but these are handy)
@@ -19,11 +21,9 @@ module.exports = {
       log_date_format: 'YYYY-MM-DD HH:mm Z',
       env: {
         NODE_ENV: 'development',
-        PORT: 3000
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 3000
       }
     }
   ]

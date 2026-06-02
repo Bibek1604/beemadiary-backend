@@ -7,13 +7,22 @@ import { CONSTANTS } from '../config/constants';
 const logger = require('../utils/logger');
 
 /**
- * Apply helmet security headers — CSP disabled, CORP set to cross-origin
- * so images and assets load across origins without browser policy errors.
+ * Apply helmet security headers.
+ * CSP is completely removed — no Content-Security-Policy header is set.
+ * CORP is set to cross-origin so images and assets load across origins.
  */
 export const securityHeaders = helmet({
-  contentSecurityPolicy:    false,
-  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+    }
+  },
+  crossOriginEmbedderPolicy: false,  // Allows cross-origin resources to load freely
   crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginOpenerPolicy:   false,  // Prevents COOP from blocking popups/iframes
 });
 
 /**

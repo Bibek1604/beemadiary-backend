@@ -5,7 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node --transpile-only src/server.ts",
-    "build": "tsc --noCheck",
+    "build": "tsc --noCheck && npm run copy-js",
+    "copy-js": "node scripts/copy-js-to-dist.js",
     "start": "node dist/server.js",
     "start:prod": "node -e \"process.env.NODE_ENV='production'; require('./dist/server.js')\"",
     "seed": "node src/scripts/mongo-seed.js",
