@@ -79,7 +79,7 @@ export interface ImageDeleteResult {
 const DEFAULT_CONSTRAINTS = {
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
   ALLOWED_MIMES: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  PROFILE_PIC_MAX_SIZE: 5 * 1024 * 1024, // 5MB
+  PROFILE_PIC_MAX_SIZE: 10 * 1024 * 1024, // 10MB
   PROFILE_PIC_ALLOWED_MIMES: ['image/jpeg', 'image/png', 'image/webp'],
 };
 

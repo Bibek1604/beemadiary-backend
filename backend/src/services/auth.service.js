@@ -96,6 +96,34 @@ class AuthService {
     return { accessToken, refreshToken, agent: { id: agent.id, full_name: agent.full_name, email: agent.email, status: agent.status.toLowerCase(), company_id: agent.company_id, role: "agent" } };
   }
 
+  async agentRegister({ email, password, full_name, phone_number }, ipAddress, userAgent) {
+    const agentRepository = require("../repositories/agent.repository");
+
+    const existing = await agentRepository.findOne({ email });
+    if (existing) { const err = new Error("An account with this email already exists"); err.statusCode = 409; throw err; }
+
+    const password_hash = await bcrypt.hash(password, 10);
+    const agentCode = `AG-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+    await prisma.agent.create({
+      data: {
+        agent_code: agentCode,
+        full_name: (full_name || email.split("@")[0] || "Agent").trim(),
+        email,
+        phone_number: phone_number || null,
+        password_hash,
+        status: "ACTIVE",
+        created_at: new Date(),
+        deleted_at: null,
+      },
+    });
+
+    auditLogRepository.create({ user_id: null, user_type: "AGENT", action: "AGENT_REGISTER", details: { email }, ip_address: ipAddress || null }).catch(() => {});
+
+    // Auto-login the freshly registered agent (creates session + tokens)
+    return this.agentLogin(email, password, ipAddress, userAgent);
+  }
+
   async refreshTokens(rawRefreshToken, ipAddress, userAgent) {
     if (!rawRefreshToken) { const err = new Error("Refresh token required"); err.statusCode = 401; throw err; }
 
@@ -133,8 +161,69 @@ class AuthService {
     return { accessToken, refreshToken: newRefreshToken };
   }
 
+  async changePassword(user, currentPassword, newPassword, currentToken) {
+    const isAdmin = ["ADMIN", "SUPER_ADMIN"].includes(String(user.type || user.role || "").toUpperCase());
+    const repo = isAdmin
+      ? require("../repositories/admin.repository")
+      : require("../repositories/agent.repository");
+
+    const account = await repo.findOne({ id: user.id });
+    if (!account) { const err = new Error("Account not found"); err.statusCode = 404; throw err; }
+
+    const valid = await bcrypt.compare(currentPassword, account.password_hash);
+    if (!valid) { const err = new Error("Current password is incorrect"); err.statusCode = 400; throw err; }
+
+    const password_hash = await bcrypt.hash(newPassword, 10);
+    const model = isAdmin ? prisma.admin : prisma.agent;
+    await model.update({ where: { id: user.id }, data: { password_hash, updated_at: new Date() } });
+
+    // Invalidate every other session for this account (keep the current one)
+    await prisma.session.deleteMany({
+      where: { user_id: user.id, token: { not: currentToken } },
+    }).catch(() => {});
+
+    auditLogRepository.create({ user_id: user.id, user_type: isAdmin ? "ADMIN" : "AGENT", action: "CHANGE_PASSWORD", details: {}, ip_address: null }).catch(() => {});
+
+    return { message: "Password changed successfully" };
+  }
+
+  async logoutAll(userId) {
+    await prisma.session.deleteMany({ where: { user_id: userId } }).catch(() => {});
+    await prisma.refreshToken.updateMany({ where: { user_id: userId }, data: { revoked_at: new Date() } }).catch(() => {});
+    return { message: "Logged out from all devices" };
+  }
+
+  /**
+   * Admin self-registration is only allowed as a one-time bootstrap when no
+   * admin account exists yet. Afterwards admins are created via /api/admin/users.
+   */
+  async adminBootstrapRegister({ email, password, first_name, last_name }, ipAddress, userAgent) {
+    const existingAdmin = await prisma.admin.findFirst({ where: { deleted_at: null } });
+    if (existingAdmin) {
+      const err = new Error("Admin registration is disabled. Ask a super admin to create your account.");
+      err.statusCode = 403; throw err;
+    }
+
+    const password_hash = await bcrypt.hash(password, 10);
+    await prisma.admin.create({
+      data: {
+        email,
+        full_name: `${first_name || ""} ${last_name || ""}`.trim() || email.split("@")[0],
+        password_hash,
+        role: "SUPER_ADMIN",
+        status: "ACTIVE",
+        created_at: new Date(),
+        deleted_at: null,
+      },
+    });
+
+    return this.adminLogin(email, password, ipAddress, userAgent);
+  }
+
   async logout(userId, accessToken) {
-    prisma.session.updateMany({ where: { user_id: userId, token: accessToken }, data: { is_active: false } }).catch(() => {});
+    // Delete the session so the access token is rejected immediately
+    // (auth middleware validates tokens by looking up the session row).
+    await prisma.session.deleteMany({ where: { user_id: userId, token: accessToken } }).catch(() => {});
     return { message: "Successfully logged out" };
   }
 }

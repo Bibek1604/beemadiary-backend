@@ -3,6 +3,10 @@ const router = express.Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
 const { prisma } = require("../config/db");
+const businessDate = require("../utils/businessDate");
+
+// Case-insensitive admin check (token carries role/type "ADMIN" / "SUPER_ADMIN")
+const isAdminUser = (u) => ["ADMIN", "SUPER_ADMIN"].includes(String(u?.role || u?.type || "").toUpperCase());
 
 const console = {
   log() {},
@@ -106,7 +110,7 @@ router.post("/policy/create", async (req, res) => {
       );
     }
 
-    if (client.agent_id !== agentId && req.user?.role !== "admin") {
+    if (client.agent_id !== agentId && !isAdminUser(req.user)) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to create policy for this client", null, 403)
       );
@@ -170,12 +174,9 @@ router.post("/policy/create", async (req, res) => {
  * based on premium due date being 6+ months overdue
  */
 function isLapsedPolicy(premiumDueDate) {
-  if (!premiumDueDate) return false;
-  const dueDate = new Date(premiumDueDate);
-  if (isNaN(dueDate.getTime())) return false;
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-  return dueDate <= sixMonthsAgo;
+  // Day-aware, Asia/Kathmandu-safe 6-month rule:
+  // exactly 6 months overdue => NOT lapsed; 6 months + 1 day => lapsed.
+  return businessDate.isLapsedDueDate(premiumDueDate, 6);
 }
 
 /**
@@ -389,6 +390,11 @@ router.get("/policy/search", async (req, res) => {
       };
     }
 
+    // Optional: filter by a specific client
+    if (req.query.client_id) {
+      whereClause.client_id = String(req.query.client_id);
+    }
+
     // Search by client name, client_id, or client phone
     const policies = await prisma.policy.findMany({
       where: whereClause,
@@ -396,11 +402,47 @@ router.get("/policy/search", async (req, res) => {
         client: true,
       },
       orderBy: { created_at: 'desc' },
-      take: 50,
+      take: 500,
     });
 
+    // Enrich rows with the fields the frontend renders + lapse metadata
+    const today = businessDate.getTodayParts();
+    const statusFilter = String(req.query.status || "ALL").trim().toUpperCase();
+
+    let rows = policies.map((p) => {
+      const isPaid = String(p.premium_status || "").trim().toUpperCase() === "PAID";
+      const isLapsedByRule = !isPaid && isLapsedPolicy(p.premium_due_date);
+      const isLapsed = String(p.status || "").trim().toUpperCase() === "LAPSED" || isLapsedByRule;
+      const dueParts = businessDate.parseDateParts(p.premium_due_date);
+      const dueIso = businessDate.toIsoDate(dueParts);
+      return {
+        ...p,
+        client_name: p.client
+          ? `${p.client.first_name || ""} ${p.client.last_name || ""}`.trim() || null
+          : null,
+        client_phone: p.client?.phone || null,
+        policy_status: p.status || null,
+        premium_status: isPaid ? "PAID" : String(p.premium_status || "DUE").toUpperCase(),
+        premium_due_date_ad: dueIso,
+        parsed_due_date: dueIso,
+        months_overdue: isPaid ? 0 : businessDate.monthsOverdue(p.premium_due_date, today),
+        days_overdue: isPaid ? 0 : Math.max(0, businessDate.daysOverdue(p.premium_due_date, today)),
+        is_lapsed_by_rule: isLapsedByRule,
+        is_lapsed: isLapsed,
+      };
+    });
+
+    if (statusFilter === "PAID") {
+      rows = rows.filter((r) => r.premium_status === "PAID");
+    } else if (statusFilter === "UNPAID") {
+      // Regular dues list: unpaid only, lapsed policies excluded
+      rows = rows.filter((r) => r.premium_status !== "PAID" && !r.is_lapsed);
+    } else if (statusFilter === "LAPSED") {
+      rows = rows.filter((r) => r.is_lapsed);
+    }
+
     res.status(200).json(
-      ApiResponse.success("Policies found", policies)
+      ApiResponse.success("Policies found", rows)
     );
   } catch (error) {
 
@@ -459,10 +501,8 @@ router.get("/policy/outdated", async (req, res) => {
     const outdatedPolicies = policies.filter(p => {
       if (!p.premium_due_date) return false;
       if (p.status === 'LAPSED') return false;
-      const dueDate = new Date(p.premium_due_date);
-      const sixMonthsAgo = new Date();
-      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-      return dueDate <= sixMonthsAgo;
+      if (String(p.premium_status || "").toUpperCase() === "PAID") return false;
+      return isLapsedPolicy(p.premium_due_date);
     });
 
     const outdatedWithDaysOverdue = outdatedPolicies.map(p => ({
@@ -540,6 +580,68 @@ router.get("/policy/lapsed", async (req, res) => {
 });
 
 /**
+ * GET /api/policy/summary
+ * Get summary of policy statuses (ACTIVE, LAPSED, EXPIRED, PENDING)
+ * NOTE: must be declared BEFORE "/policy/:policyId" or Express treats
+ * "summary" as a policyId and this route becomes unreachable.
+ */
+router.get("/policy/summary", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+
+    if (!agentId) {
+      return res.status(401).json(
+        ApiResponse.error("Agent ID not found", null, 401)
+      );
+    }
+
+    // Get count by status
+    const statusCounts = await prisma.policy.groupBy({
+      by: ["status"],
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      _count: true,
+    });
+
+    // Get outdated policies count (premium not paid for 6+ months)
+    const allPolicies = await prisma.policy.findMany({
+      where: {
+        agent_id: agentId,
+        deleted_at: null,
+      },
+      select: {
+        id: true,
+        premium_due_date: true,
+        status: true,
+      },
+    });
+
+    const outdatedCount = allPolicies.filter(
+      p => p.status !== "LAPSED" && isLapsedPolicy(p.premium_due_date)
+    ).length;
+
+    const summary = {
+      total_policies: allPolicies.length,
+      outdated_policies: outdatedCount,
+      by_status: statusCounts.reduce((acc, item) => {
+        acc[item.status] = item._count;
+        return acc;
+      }, {}),
+    };
+
+    res.status(200).json(
+      ApiResponse.success("Policy summary", summary)
+    );
+  } catch (error) {
+    res.status(500).json(
+      ApiResponse.error("Failed to get policy summary", null, 500)
+    );
+  }
+});
+
+/**
  * GET /api/policy/:policyId
  * Get policy details
  */
@@ -565,7 +667,7 @@ router.get("/policy/:policyId", async (req, res) => {
       );
     }
 
-    if (policy.agent_id !== agentId && req.user?.role !== "admin") {
+    if (policy.agent_id !== agentId && !isAdminUser(req.user)) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to view this policy", null, 403)
       );
@@ -573,6 +675,7 @@ router.get("/policy/:policyId", async (req, res) => {
 
     // Filter out null values
     const responseData = Object.fromEntries(
+      Object.entries(policy).filter(([, v]) => v !== null && v !== undefined && v !== "")
     );
 
     res.status(200).json(
@@ -611,7 +714,7 @@ router.put("/policy/:policyId", async (req, res) => {
       );
     }
 
-    if (policy.agent_id !== agentId && req.user?.role !== "admin") {
+    if (policy.agent_id !== agentId && !isAdminUser(req.user)) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to update this policy", null, 403)
       );
@@ -628,7 +731,8 @@ router.put("/policy/:policyId", async (req, res) => {
     const allowedFields = [
       "plan_name", "plan_no", "policy_term", "sum_assured", "ab_pwb",
       "doc", "maturity_time", "premium_amount", "discount_scheme",
-      "premium_due_date", "bank_account", "branch", "premium_paid", "status"
+      "premium_due_date", "bank_account", "branch", "premium_paid", "status",
+      "premium_status", "payment_date"
     ];
 
     const updateErrors = [];
@@ -658,10 +762,24 @@ router.put("/policy/:policyId", async (req, res) => {
             return;
           }
           updateData[field] = value;
+        } else if (field === "premium_status") {
+          const normalized = String(value).trim().toUpperCase();
+          if (!["PAID", "DUE", "UNPAID"].includes(normalized)) {
+            updateErrors.push("premium_status must be one of: PAID, DUE, UNPAID");
+            return;
+          }
+          updateData[field] = normalized;
         } else if (field === "maturity_time") {
           const dateObj = new Date(value);
           if (isNaN(dateObj.getTime())) {
             updateErrors.push("Invalid maturity time format");
+            return;
+          }
+          updateData[field] = dateObj;
+        } else if (field === "payment_date") {
+          const dateObj = new Date(value);
+          if (isNaN(dateObj.getTime())) {
+            updateErrors.push("Invalid payment date format");
             return;
           }
           updateData[field] = dateObj;
@@ -728,7 +846,7 @@ router.delete("/policy/:policyId", async (req, res) => {
       );
     }
 
-    if (policy.agent_id !== agentId && req.user?.role !== "admin") {
+    if (policy.agent_id !== agentId && !isAdminUser(req.user)) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to delete this policy", null, 403)
       );
@@ -762,7 +880,7 @@ router.delete("/policy/:policyId", async (req, res) => {
 router.post("/policy/sync-lapsed", async (req, res) => {
   try {
     const agentId = req.user?.id;
-    const isAdmin = req.user?.role === "admin";
+    const isAdmin = isAdminUser(req.user);
 
     if (!agentId) {
       return res.status(401).json(
@@ -822,6 +940,83 @@ router.post("/policy/sync-lapsed", async (req, res) => {
 });
 
 /**
+ * PUT /api/policy/:policyId/pay-installment
+ * Record ONE month's premium as paid: advance the due date by exactly one
+ * month (clearing a single overdue installment) instead of clearing all
+ * outstanding months at once. The policy stays in the dues list with one
+ * fewer month overdue until it is fully caught up, at which point it is
+ * marked PAID (and reactivated if it had lapsed).
+ */
+router.put("/policy/:policyId/pay-installment", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+    const { policyId } = req.params;
+
+    if (!agentId) {
+      return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
+    }
+
+    const policy = await prisma.policy.findUnique({ where: { id: policyId } });
+    if (!policy) {
+      return res.status(404).json(ApiResponse.error("Policy not found", null, 404));
+    }
+    if (policy.agent_id !== agentId && !isAdminUser(req.user)) {
+      return res.status(403).json(ApiResponse.error("Unauthorized to update this policy", null, 403));
+    }
+
+    const today = businessDate.getTodayParts();
+    const dueParts = businessDate.parseDateParts(policy.premium_due_date);
+
+    // Advance the due date by exactly one calendar month (end-of-month safe).
+    const addOneMonth = (parts) => {
+      let y = parts.year;
+      let m = parts.month + 1;
+      if (m > 12) { m = 1; y += 1; }
+      const daysInTarget = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      return { year: y, month: m, day: Math.min(parts.day, daysInTarget) };
+    };
+
+    const updateData = {
+      premium_paid: (Number(policy.premium_paid) || 0) + (Number(policy.premium_amount) || 0),
+      payment_date: new Date(),
+    };
+
+    if (dueParts) {
+      const nextParts = addOneMonth(dueParts);
+      updateData.premium_due_date = businessDate.toIsoDate(nextParts);
+      // Still due if the new due date is today or earlier; otherwise caught up.
+      const stillDue = businessDate.compareParts(nextParts, today) <= 0;
+      updateData.premium_status = stillDue ? "DUE" : "PAID";
+      if (!stillDue && String(policy.status || "").toUpperCase() === "LAPSED") {
+        updateData.status = "ACTIVE"; // caught up — reactivate a lapsed policy
+      }
+    } else {
+      // No due date on record: treat this as a single full payment.
+      updateData.premium_status = "PAID";
+    }
+
+    const updated = await prisma.policy.update({ where: { id: policyId }, data: updateData });
+    const monthsOverdue = updated.premium_due_date
+      ? businessDate.monthsOverdue(updated.premium_due_date, today)
+      : 0;
+
+    res.status(200).json(
+      ApiResponse.success("One premium installment recorded as paid", {
+        id: updated.id,
+        premium_due_date: updated.premium_due_date,
+        premium_status: updated.premium_status,
+        premium_paid: updated.premium_paid,
+        status: updated.status,
+        months_overdue: monthsOverdue,
+        fully_paid: updated.premium_status === "PAID",
+      })
+    );
+  } catch (error) {
+    res.status(500).json(ApiResponse.error("Failed to record premium payment", null, 500));
+  }
+});
+
+/**
  * PUT /api/policy/:policyId/mark-lapsed
  * Manually mark a specific policy as LAPSED
  */
@@ -847,7 +1042,7 @@ router.put("/policy/:policyId/mark-lapsed", async (req, res) => {
       );
     }
 
-    if (policy.agent_id !== agentId && req.user?.role !== "admin") {
+    if (policy.agent_id !== agentId && !isAdminUser(req.user)) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to update this policy", null, 403)
       );
@@ -869,66 +1064,6 @@ router.put("/policy/:policyId/mark-lapsed", async (req, res) => {
   } catch (error) {
     res.status(500).json(
       ApiResponse.error("Failed to mark policy as lapsed", null, 500)
-    );
-  }
-});
-
-/**
- * GET /api/policy/summary
- * Get summary of policy statuses (ACTIVE, LAPSED, EXPIRED, PENDING)
- */
-router.get("/policy/summary", async (req, res) => {
-  try {
-    const agentId = req.user?.id;
-
-    if (!agentId) {
-      return res.status(401).json(
-        ApiResponse.error("Agent ID not found", null, 401)
-      );
-    }
-
-    // Get count by status
-    const statusCounts = await prisma.policy.groupBy({
-      by: ["status"],
-      where: {
-        agent_id: agentId,
-        deleted_at: null,
-      },
-      _count: true,
-    });
-
-    // Get outdated policies count (premium not paid for 6+ months)
-    const allPolicies = await prisma.policy.findMany({
-      where: {
-        agent_id: agentId,
-        deleted_at: null,
-      },
-      select: {
-        id: true,
-        premium_due_date: true,
-        status: true,
-      },
-    });
-
-    const outdatedCount = allPolicies.filter(
-      p => p.status !== "LAPSED" && isLapsedPolicy(p.premium_due_date)
-    ).length;
-
-    const summary = {
-      total_policies: allPolicies.length,
-      outdated_policies: outdatedCount,
-      by_status: statusCounts.reduce((acc, item) => {
-        acc[item.status] = item._count;
-        return acc;
-      }, {}),
-    };
-
-    res.status(200).json(
-      ApiResponse.success("Policy summary", summary)
-    );
-  } catch (error) {
-    res.status(500).json(
-      ApiResponse.error("Failed to get policy summary", null, 500)
     );
   }
 });

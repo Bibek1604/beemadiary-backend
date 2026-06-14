@@ -57,7 +57,7 @@ router.get("/diagnostic/client/:clientId", async (req, res) => {
       );
     }
 
-    if (client.agent_id !== agentId && req.user?.role !== "admin") {
+    if (client.agent_id !== agentId && !["ADMIN", "SUPER_ADMIN"].includes(String(req.user?.role || req.user?.type || "").toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to view this client", null, 403)
       );

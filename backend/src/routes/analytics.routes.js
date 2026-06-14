@@ -3,6 +3,7 @@ const router = express.Router();
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
 const { prisma } = require("../config/db");
+const businessDate = require("../utils/businessDate");
 
 // All analytics endpoints require authentication
 router.use(authMiddleware);
@@ -40,20 +41,23 @@ router.get("/analytics/monthly-graph/", async (req, res) => {
       );
     }
 
-    const currentYear = new Date().getFullYear();
+    // Current year in the business timezone (Asia/Kathmandu)
+    const currentYear = businessDate.getTodayParts().year;
     const monthlyData = [];
 
-    // Get client enrollments by month for current year
+    // Get client enrollments by month for current year (timezone-safe ranges)
     for (let month = 1; month <= 12; month++) {
-      const startDate = new Date(currentYear, month - 1, 1);
-      const endDate = new Date(currentYear, month, 0, 23, 59, 59);
+      const startDate = businessDate.businessMidnightUtc(currentYear, month, 1);
+      const endDate = month === 12
+        ? businessDate.businessMidnightUtc(currentYear + 1, 1, 1)
+        : businessDate.businessMidnightUtc(currentYear, month + 1, 1);
 
       const clientCount = await prisma.client.count({
         where: {
           agent_id: agentId,
           created_at: {
             gte: startDate,
-            lte: endDate,
+            lt: endDate,
           },
           deleted_at: null,
         },
@@ -120,9 +124,9 @@ router.get("/analytics/yearly-graph/", async (req, res) => {
       );
     }
 
-    const currentYear = new Date().getFullYear();
-    const startOfYear = new Date(currentYear, 0, 1);
-    const endOfYear = new Date(currentYear, 11, 31, 23, 59, 59);
+    const currentYear = businessDate.getTodayParts().year;
+    const startOfYear = businessDate.businessMidnightUtc(currentYear, 1, 1);
+    const endOfYear = businessDate.businessMidnightUtc(currentYear + 1, 1, 1);
 
     const yearlyStats = {
       year: currentYear,
@@ -137,7 +141,7 @@ router.get("/analytics/yearly-graph/", async (req, res) => {
           agent_id: agentId,
           created_at: {
             gte: startOfYear,
-            lte: endOfYear,
+            lt: endOfYear,
           },
           deleted_at: null,
         },
@@ -153,7 +157,7 @@ router.get("/analytics/yearly-graph/", async (req, res) => {
           agent_id: agentId,
           created_at: {
             gte: startOfYear,
-            lte: endOfYear,
+            lt: endOfYear,
           },
           deleted_at: null,
         },

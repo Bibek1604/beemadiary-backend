@@ -699,16 +699,40 @@ router.post(
   asyncHandler(async (req: any, res: Response) => {
     const imageUrl = req.file ? (await imageHandler.uploadImage(req.file.path, 'agents')).url : undefined;
     const password = normalizeText(req.body.password);
+    const fullName = normalizeText(req.body.full_name || `${req.body.first_name || ''} ${req.body.last_name || ''}`);
+    const email = normalizeText(req.body.email).toLowerCase();
+    const companyId = normalizeText(req.body.company ?? req.body.company_id);
 
-    if (!password) {
-      return res.status(400).json(ResponseHandler.validationError([{ field: 'password', message: 'Password is required' }]));
+    // Agent accounts are created BY ADMIN: name, email, password and the
+    // company the agent is associated with are all required.
+    const fieldErrors: Array<{ field: string; message: string }> = [];
+    if (!fullName) fieldErrors.push({ field: 'full_name', message: 'Agent name is required' });
+    if (!email) fieldErrors.push({ field: 'email', message: 'Email is required' });
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fieldErrors.push({ field: 'email', message: 'Enter a valid email address' });
+    if (!password) fieldErrors.push({ field: 'password', message: 'Password is required' });
+    else if (password.length < 6) fieldErrors.push({ field: 'password', message: 'Password must be at least 6 characters' });
+    if (!companyId) fieldErrors.push({ field: 'company', message: 'Select the company this agent is associated with' });
+    if (fieldErrors.length > 0) {
+      return res.status(400).json(ResponseHandler.validationError(fieldErrors));
+    }
+
+    const company = await prisma.company.findUnique({ where: { id: companyId } });
+    if (!company || company.deleted_at) {
+      return res.status(400).json(ResponseHandler.validationError([{ field: 'company', message: 'Selected company does not exist' }]));
+    }
+
+    const existingAgent = await prisma.agent.findFirst({ where: { email, deleted_at: null } });
+    if (existingAgent) {
+      return res.status(409).json(ResponseHandler.error('An agent with this email already exists', 409));
     }
 
     const agent = await prisma.agent.create({
       data: {
-        agent_code: normalizeText(req.body.agent_code || req.body.username),
-        full_name: normalizeText(req.body.full_name || `${req.body.first_name || ''} ${req.body.last_name || ''}`),
-        email: normalizeText(req.body.email),
+        agent_code:
+          normalizeText(req.body.agent_code || req.body.username) ||
+          `AG-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+        full_name: fullName,
+        email,
         phone_number: normalizeText(req.body.phone_number),
         password_hash: PasswordUtils.hashPassword(password),
         lic_agent_code: normalizeText(req.body.lic_agent_code),
@@ -718,7 +742,9 @@ router.post(
         short_bio: normalizeText(req.body.short_bio),
         profile_picture: imageUrl || normalizeText(req.body.profile_picture),
         status: normalizeStatus(req.body.is_active),
-        company_id: req.body.company ? String(req.body.company) : null,
+        company_id: companyId,
+        created_at: new Date(),
+        deleted_at: null,
       },
     });
 
@@ -737,6 +763,14 @@ router.patch(
 
     const imageUrl = req.file ? (await imageHandler.uploadImage(req.file.path, 'agents')).url : undefined;
 
+    const patchCompanyId = normalizeText(req.body.company ?? req.body.company_id);
+    if (patchCompanyId) {
+      const company = await prisma.company.findUnique({ where: { id: patchCompanyId } });
+      if (!company || company.deleted_at) {
+        return res.status(400).json(ResponseHandler.validationError([{ field: 'company', message: 'Selected company does not exist' }]));
+      }
+    }
+
     const updated = await prisma.agent.update({
       where: { id: req.params.id },
       data: {
@@ -754,7 +788,7 @@ router.patch(
         short_bio: req.body.short_bio ?? undefined,
         profile_picture: imageUrl ?? req.body.profile_picture ?? undefined,
         status: req.body.is_active === undefined ? undefined : normalizeStatus(req.body.is_active),
-        company_id: req.body.company ? String(req.body.company) : undefined,
+        company_id: (req.body.company ?? req.body.company_id) ? String(req.body.company ?? req.body.company_id) : undefined,
         ...(normalizeText(req.body.password) ? { password_hash: PasswordUtils.hashPassword(normalizeText(req.body.password)) } : {}),
       },
     });
@@ -1082,6 +1116,72 @@ router.delete(
   asyncHandler(async (req: any, res: Response) => {
     await prisma.notification.delete({ where: { id: req.params.id } });
     return res.status(200).json(ResponseHandler.success('Notification deleted successfully', { id: req.params.id }));
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Reports — generic CRUD used by the admin frontend (reportApi)
+// ---------------------------------------------------------------------------
+router.get(
+  '/reports',
+  asyncHandler(async (_req: any, res: Response) => {
+    const reports = await prisma.report.findMany({ orderBy: { created_at: 'desc' } });
+    return res.status(200).json(ResponseHandler.success('Reports retrieved successfully', reports));
+  })
+);
+
+router.get(
+  '/reports/:id',
+  asyncHandler(async (req: any, res: Response) => {
+    const report = await prisma.report.findUnique({ where: { id: req.params.id } });
+    if (!report) {
+      return res.status(404).json(ResponseHandler.notFound('Report not found'));
+    }
+    return res.status(200).json(ResponseHandler.success('Report retrieved successfully', report));
+  })
+);
+
+router.post(
+  '/reports',
+  asyncHandler(async (req: any, res: Response) => {
+    const { id: _ignored, ...body } = (req.body && typeof req.body === 'object') ? req.body : {};
+    if (!body.title && !body.name && !body.type) {
+      return res.status(400).json(
+        ResponseHandler.validationError([{ field: 'title', message: 'Report requires at least a title, name or type' }])
+      );
+    }
+    const report = await prisma.report.create({
+      data: { ...body, created_at: new Date(), updated_at: new Date() },
+    });
+    return res.status(201).json(ResponseHandler.success('Report created successfully', report));
+  })
+);
+
+router.patch(
+  '/reports/:id',
+  asyncHandler(async (req: any, res: Response) => {
+    const existing = await prisma.report.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      return res.status(404).json(ResponseHandler.notFound('Report not found'));
+    }
+    const { id: _ignored, created_at: _c, ...body } = (req.body && typeof req.body === 'object') ? req.body : {};
+    const report = await prisma.report.update({
+      where: { id: req.params.id },
+      data: { ...body, updated_at: new Date() },
+    });
+    return res.status(200).json(ResponseHandler.success('Report updated successfully', report));
+  })
+);
+
+router.delete(
+  '/reports/:id',
+  asyncHandler(async (req: any, res: Response) => {
+    const existing = await prisma.report.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      return res.status(404).json(ResponseHandler.notFound('Report not found'));
+    }
+    await prisma.report.delete({ where: { id: req.params.id } });
+    return res.status(200).json(ResponseHandler.success('Report deleted successfully', { id: req.params.id }));
   })
 );
 

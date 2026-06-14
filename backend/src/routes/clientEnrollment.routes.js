@@ -15,7 +15,7 @@ const {
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
   fileFilter: (req, file, cb) => {
     const allowedMimeTypes = [
       "image/jpeg",
@@ -285,6 +285,74 @@ router.get("/clients", async (req, res) => {
       ApiResponse.error("Failed to get all clients", null, 500)
     );
   }
+});
+
+/**
+ * GET /api/my-clients/stats/
+ * Aggregate client stats for the authenticated agent (used by the
+ * Achievements page and dashboards). Returns totals, this-month birthdays,
+ * and a per-month enrollment breakdown for the current year.
+ */
+router.get(["/my-clients/stats", "/my-clients/stats/"], async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+    if (!agentId) {
+      return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
+    }
+
+    const clients = await prisma.client.findMany({
+      where: { agent_id: agentId, deleted_at: null },
+      include: { policies: { where: { deleted_at: null } } },
+      take: 5000,
+    });
+
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    const monthWiseStats = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, count: 0 }));
+    let birthdaysThisMonth = 0;
+
+    for (const c of clients) {
+      if (c.dob) {
+        const d = new Date(c.dob);
+        if (!Number.isNaN(d.getTime()) && d.getMonth() === currentMonth) birthdaysThisMonth++;
+      }
+      if (c.created_at) {
+        const cd = new Date(c.created_at);
+        if (!Number.isNaN(cd.getTime()) && cd.getFullYear() === currentYear) {
+          monthWiseStats[cd.getMonth()].count++;
+        }
+      }
+    }
+
+    const stats = {
+      total_clients: clients.length,
+      clients_with_policies: clients.filter((c) => c.policies?.length > 0).length,
+      clients_without_policies: clients.filter((c) => !c.policies || c.policies.length === 0).length,
+      total_policies: clients.reduce((sum, c) => sum + (c.policies?.length || 0), 0),
+      birthdays_this_month: birthdaysThisMonth,
+      monthWiseStats,
+    };
+
+    res.status(200).json(ApiResponse.success("Client stats retrieved", stats));
+  } catch (error) {
+    console.error("[Get Client Stats Error]:", error);
+    res.status(500).json(ApiResponse.error("Failed to get client stats", null, 500));
+  }
+});
+
+/**
+ * GET /api/my-achievements/
+ * Achievement badges are derived on the client from the stats above; there is
+ * no server-side per-agent unlock store yet. Return a valid (empty) list so
+ * the frontend gets a 200 instead of a 404 and overlays its computed badges.
+ */
+router.get(["/my-achievements", "/my-achievements/"], async (req, res) => {
+  if (!req.user?.id) {
+    return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
+  }
+  res.status(200).json(ApiResponse.success("Achievements retrieved", { results: [] }));
 });
 
 /**
@@ -645,6 +713,9 @@ router.post(
     const gender = firstValue(payload.gender);
     const nomineeName = firstValue(payload.nominee_name, payload.nomineeName);
     const relationWithNominee = firstValue(payload.relation_with_nominee, payload.relationWithNominee);
+    const fatherName = firstValue(payload.father_name, payload.fatherName);
+    const motherName = firstValue(payload.mother_name, payload.motherName);
+    const grandfatherName = firstValue(payload.grandfather_name, payload.grandfatherName);
     const profession = firstValue(payload.profession);
     const memberGroup = firstValue(payload.member_group, payload.memberGroup);
     const reasonForInsurance = firstValue(payload.reason_for_insurance, payload.reasonForInsurance, payload.why_bought, payload.whyBought);
@@ -723,6 +794,16 @@ router.post(
     if (!address) errors.push("Address is required");
     else if (address.length > 255) errors.push("Address must not exceed 255 characters");
 
+    // Parents/family details are mandatory — null/empty values are not accepted
+    if (!fatherName?.trim()) errors.push("Father name is required");
+    else if (fatherName.length > 100) errors.push("Father name must not exceed 100 characters");
+
+    if (!motherName?.trim()) errors.push("Mother name is required");
+    else if (motherName.length > 100) errors.push("Mother name must not exceed 100 characters");
+
+    if (!grandfatherName?.trim()) errors.push("Grandfather name is required");
+    else if (grandfatherName.length > 100) errors.push("Grandfather name must not exceed 100 characters");
+
     if (secondaryPhone && !isValidPhone(secondaryPhone)) errors.push("Secondary phone must be exactly 10 numeric digits");
 
     if (dob) {
@@ -738,10 +819,19 @@ router.post(
       }
     }
 
+    // Child clients require a parent/guardian (nominee) on record
+    const isChildClient =
+      String(memberGroup || "").trim().toLowerCase() === "child" ||
+      String(gender || "").trim().toLowerCase() === "child";
+    if (isChildClient) {
+      if (!nomineeName?.trim()) errors.push("Parent/guardian (nominee) name is required for child clients");
+      if (!relationWithNominee?.trim()) errors.push("Relation with parent/guardian is required for child clients");
+    }
+
     if (gender?.trim()) {
-      const validGenders = ["male", "female", "other"];
+      const validGenders = ["male", "female", "child", "other"];
       if (!validGenders.includes(gender.trim().toLowerCase())) {
-        errors.push("Gender must be one of: male, female, other");
+        errors.push("Gender must be one of: male, female, child, other");
       }
     }
 
@@ -802,12 +892,10 @@ router.post(
       ? await uploadFileToCloud(profilePictureFile, `${uploadFolderBase}/profile-picture`, `${clientId}-profile-picture`)
       : null;
 
-    const existing = await prisma.client.findFirst({
-      where: { OR: [{ email }, { phone }] },
-    });
-    if (existing) {
-      return res.status(400).json(ApiResponse.error("Email or phone already registered", null, 400));
-    }
+    // Email/phone are intentionally NOT unique: an agent may enroll multiple
+    // clients that share a contact number or email (e.g. family members), and
+    // the same person may be a client of more than one agent. No duplicate
+    // check is performed here.
 
     const clientData = {
       client_id: clientId,
@@ -820,9 +908,12 @@ router.post(
       secondary_phone: secondaryPhone || null,
       dob: dob ? new Date(dob) : null,
       age: age ? parseInt(age, 10) : null,
-      gender: gender || null,
+      gender: gender ? gender.trim().toUpperCase() : null,
       nominee_name: nomineeName || null,
       relation_with_nominee: relationWithNominee || null,
+      father_name: fatherName.trim(),
+      mother_name: motherName.trim(),
+      grandfather_name: grandfatherName.trim(),
       profession: profession || null,
       member_group: memberGroup || null,
       reason_for_insurance: reasonForInsurance || null,
@@ -1234,7 +1325,7 @@ router.get(["/client/:clientId", "/enrollment/:clientId"], async (req, res) => {
       );
     }
 
-    if (client.agent_id !== agentId && req.user?.role !== "admin") {
+    if (client.agent_id !== agentId && !["ADMIN", "SUPER_ADMIN"].includes(String(req.user?.role || req.user?.type || "").toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to view this client", null, 403)
       );
@@ -1371,7 +1462,7 @@ router.put(
       );
     }
 
-    if (client.agent_id !== agentId && req.user?.role !== "admin") {
+    if (client.agent_id !== agentId && !["ADMIN", "SUPER_ADMIN"].includes(String(req.user?.role || req.user?.type || "").toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to update this client", null, 403)
       );
@@ -1398,6 +1489,9 @@ router.put(
     const memberGroup = firstValue(body.member_group, body.memberGroup, body.member);
     const nomineeName = firstValue(body.nominee_name, body.nomineeName, body.nominee);
     const nomineeRelation = firstValue(body.relation_with_nominee, body.nominee_relation, body.relationWithNominee, body.relation);
+    const fatherName = firstValue(body.father_name, body.fatherName);
+    const motherName = firstValue(body.mother_name, body.motherName);
+    const grandfatherName = firstValue(body.grandfather_name, body.grandfatherName);
     const reasonForInsurance = firstValue(body.reason_for_insurance, body.reasonForInsurance, body.why_bought, body.whyBought);
     const gender = firstValue(body.gender);
     const dob = firstValue(body.dob, body.date_of_birth, body.dateOfBirth);
@@ -1413,6 +1507,9 @@ router.put(
     if (memberGroup) updateData.member_group = memberGroup;
     if (nomineeName) updateData.nominee_name = nomineeName;
     if (nomineeRelation) updateData.relation_with_nominee = nomineeRelation;
+    if (fatherName?.trim()) updateData.father_name = fatherName.trim();
+    if (motherName?.trim()) updateData.mother_name = motherName.trim();
+    if (grandfatherName?.trim()) updateData.grandfather_name = grandfatherName.trim();
     if (reasonForInsurance) updateData.reason_for_insurance = reasonForInsurance;
     if (gender) updateData.gender = gender.toUpperCase();
 
@@ -1668,7 +1765,7 @@ router.delete(["/client/:clientId", "/enrollment/:clientId", "/enrollment/:clien
     }
 
     // Verify ownership
-    if (client.agent_id !== agentId && req.user?.role !== "admin") {
+    if (client.agent_id !== agentId && !["ADMIN", "SUPER_ADMIN"].includes(String(req.user?.role || req.user?.type || "").toUpperCase())) {
       return res.status(403).json(ApiResponse.error("Unauthorized to delete this client", null, 403));
     }
 

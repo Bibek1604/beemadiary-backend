@@ -32,6 +32,9 @@ import analyticsRoutes from './routes/analytics.routes';
 // Renamed from dashboard.routes.js to avoid naming collision with dashboard.routes.ts,
 // which TypeScript compiles to the same dist/routes/dashboard.routes.js filename.
 const dashboardLegacyRoutes = require('./routes/dashboard-agent.routes.js');
+// dashboard.consolidated.routes.js — single consolidated dashboard API
+// (/api/dashboard and /api/dashboard/:agentId) used by the agent dashboard UI.
+const dashboardConsolidatedRoutes = require('./routes/dashboard.consolidated.routes.js');
 import agentNotificationRoutes from './routes/agentNotification.routes';
 import swaggerOptions from './docs/swagger-complete';
 import { globalErrorHandler } from './middleware/errors/global-error-handler';
@@ -112,6 +115,7 @@ app.use('/api', policyRoutes);
 app.use('/api', agentProfileRoutes);          // /api/agent/profile, /api/agent/profile/upload-image, ...
 app.use('/api', analyticsRoutes);             // /api/analytics/monthly-graph/, ...
 app.use('/api', dashboardLegacyRoutes);       // /api/dashboard-overview/
+app.use('/api', dashboardConsolidatedRoutes); // /api/dashboard, /api/dashboard/:agentId (consolidated)
 app.use('/api', agentNotificationRoutes);     // /api/agent/notifications, /api/agent/notifications/:id/read, ...
 
 // 404 Handler - Must be after all routes

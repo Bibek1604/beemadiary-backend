@@ -449,7 +449,9 @@ router.post(['/', ''], verifyToken, async (req, res) => {
  * Get a single event by ID
  * NEVER returns 500 - all errors mapped to 4xx
  */
-router.get(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
+router.get(['/:eventId', '/:eventId/'], verifyToken, async (req, res, next) => {
+  // '/upcoming' is a dedicated route registered below — let it through
+  if (req.params.eventId === 'upcoming') return next();
   try {
     // ===== AUTHENTICATION =====
     const agentId = req.user?.id;
@@ -495,7 +497,7 @@ router.get(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
     }
 
     // ===== AUTHORIZE - Check ownership =====
-    if (event.agent_id !== agentId && req.user?.role !== 'admin') {
+    if (event.agent_id !== agentId && !['ADMIN','SUPER_ADMIN'].includes(String(req.user?.role || req.user?.type || '').toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error('Not authorized to access this event', null, 403)
       );
@@ -577,7 +579,7 @@ router.patch(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
     }
 
     // ===== AUTHORIZE - Check ownership =====
-    if (event.agent_id !== agentId && req.user?.role !== 'admin') {
+    if (event.agent_id !== agentId && !['ADMIN','SUPER_ADMIN'].includes(String(req.user?.role || req.user?.type || '').toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error('Not authorized to update this event', null, 403)
       );
@@ -736,7 +738,7 @@ router.delete(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
     }
 
     // ===== AUTHORIZE - Check ownership =====
-    if (event.agent_id !== agentId && req.user?.role !== 'admin') {
+    if (event.agent_id !== agentId && !['ADMIN','SUPER_ADMIN'].includes(String(req.user?.role || req.user?.type || '').toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error('Not authorized to delete this event', null, 403)
       );

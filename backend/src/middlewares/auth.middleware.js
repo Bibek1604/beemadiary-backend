@@ -92,6 +92,26 @@ const authenticateAdmin = async (req, res, next) => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// authenticateAny — accepts BOTH agent and admin tokens (routes shared by
+// the user panel and the admin panel, e.g. change-password / logout-all).
+// ---------------------------------------------------------------------------
+const authenticateAny = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+    const decoded = token ? jwt.decode(token) : null;
+    const type = String(decoded?.type || decoded?.role || "").toUpperCase();
+    if (type === "ADMIN" || type === "SUPER_ADMIN") {
+      return authenticateAdmin(req, res, next);
+    }
+    return authenticate(req, res, next);
+  } catch {
+    res.status(500).json(ApiResponse.error("Something went wrong. Please try again later."));
+  }
+};
+
 module.exports = authenticate;
 module.exports.authenticate      = authenticate;
 module.exports.authenticateAdmin = authenticateAdmin;
+module.exports.authenticateAny   = authenticateAny;

@@ -9,7 +9,8 @@
     "copy-js": "node scripts/copy-js-to-dist.js",
     "start": "node dist/server.js",
     "start:prod": "node -e \"process.env.NODE_ENV='production'; require('./dist/server.js')\"",
-    "seed": "node src/scripts/mongo-seed.js",
+    "seed": "ts-node --transpile-only src/scripts/mongo-seed.js",
+    "seed:local": "ts-node --transpile-only src/scripts/seed-local.js",
     "db:indexes": "node src/scripts/mongo-indexes.js",
     "lint": "eslint src/**/*.ts",
     "test": "jest"

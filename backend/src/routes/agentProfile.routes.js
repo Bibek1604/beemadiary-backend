@@ -15,7 +15,7 @@ const console = {
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
   fileFilter: (req, file, cb) => {
     const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     if (allowedMimeTypes.includes(file.mimetype)) {
@@ -45,7 +45,8 @@ router.use(authMiddleware);
  *       200:
  *         description: Agent profile retrieved successfully
  */
-router.get("/agent/profile", async (req, res) => {
+// Aliases: /api/me and /api/agent/me (used by the agent frontend auth flow)
+router.get(["/agent/profile", "/agent/me", "/me"], async (req, res) => {
   try {
     const userId = req.user?.id;
 
@@ -70,6 +71,26 @@ router.get("/agent/profile", async (req, res) => {
     const cleanedProfile = Object.fromEntries(
       Object.entries(profile).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
+
+    // Attach the company assigned by the admin (read-only for the agent) so the
+    // settings page can display it. Best-effort: never fail the profile load.
+    if (profile.company_id) {
+      try {
+        const company = await prisma.company.findUnique({ where: { id: profile.company_id } });
+        if (company) {
+          cleanedProfile.company = {
+            id: company.id,
+            name: company.name,
+            email: company.email,
+            phone_number: company.phone_number,
+            address: company.address,
+          };
+          cleanedProfile.company_name = company.name;
+        }
+      } catch (_e) {
+        // ignore — company is optional context
+      }
+    }
 
     res.status(200).json(
       ApiResponse.success("Agent profile retrieved successfully", cleanedProfile)
@@ -102,6 +123,7 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
     const userId = req.user?.id;
     const {
       full_name,
+      email,
       phone_number,
       license_number,
       license_expiry,
@@ -141,8 +163,10 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
       full_name: full_name.trim(),
     };
 
-    // Only include email if user has it
-    if (req.user?.email) {
+    // Email: prefer the value submitted in the form, fall back to the token's email
+    if (email && email.trim()) {
+      updateData.email = email.trim();
+    } else if (req.user?.email) {
       updateData.email = req.user.email;
     }
 
@@ -240,17 +264,87 @@ router.put("/agent/profile/:id", async (req, res) => {
     const { id } = req.params;
     const userId = req.user?.id;
 
-    if (id !== userId && req.user?.role !== "admin") {
+    if (id !== userId && !["ADMIN", "SUPER_ADMIN"].includes(String(req.user?.role || req.user?.type || "").toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to update this profile", null, 403)
       );
     }
 
-    const updateData = req.body;
+    const existing = await prisma.agent.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json(ApiResponse.error("Agent profile not found", null, 404));
+    }
 
-    // TODO: Update in database
+    const updateData = mapAgentProfileBody(req.body);
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json(ApiResponse.error("No valid fields to update", null, 400));
+    }
+
+    const saved = await prisma.agent.update({ where: { id }, data: updateData });
+
+    const cleaned = Object.fromEntries(
+      Object.entries(saved).filter(([_, value]) => value !== null && value !== undefined && value !== "")
+    );
+
     res.status(200).json(
-      ApiResponse.success("Agent profile updated successfully", updateData)
+      ApiResponse.success("Agent profile updated successfully", cleaned)
+    );
+  } catch (error) {
+    res.status(500).json(
+      ApiResponse.error("Failed to update agent profile", null, 500)
+    );
+  }
+});
+
+/**
+ * PATCH /api/profile/update
+ * Update the authenticated agent's own profile (JSON or multipart with `image`).
+ * Mirrors POST /api/agent/profile but is partial — only provided fields change.
+ */
+router.patch("/profile/update", upload.single("image"), async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
+    }
+
+    const existing = await prisma.agent.findUnique({ where: { id: userId } });
+    if (!existing) {
+      return res.status(404).json(ApiResponse.error("Agent profile not found", null, 404));
+    }
+
+    const updateData = mapAgentProfileBody(req.body);
+
+    // Optional image upload
+    if (req.file) {
+      try {
+        const cloudinaryResult = await uploadToCloudinary(
+          req.file.buffer,
+          `lic-insurance/agent-profiles/${userId}`,
+          `agent-profile-${userId}`
+        );
+        updateData.profile_picture = cloudinaryResult.secure_url;
+        updateData.profile_picture_public_id = cloudinaryResult.public_id;
+      } catch (cloudinaryError) {
+        return res.status(400).json(
+          ApiResponse.error(`Image upload failed: ${cloudinaryError.message}`, null, 400)
+        );
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json(ApiResponse.error("No valid fields to update", null, 400));
+    }
+
+    const saved = await prisma.agent.update({ where: { id: userId }, data: updateData });
+
+    const cleaned = Object.fromEntries(
+      Object.entries(saved).filter(([_, value]) => value !== null && value !== undefined && value !== "")
+    );
+
+    res.status(200).json(
+      ApiResponse.success("Agent profile updated successfully", cleaned)
     );
   } catch (error) {
     res.status(500).json(
@@ -287,7 +381,7 @@ router.delete("/agent/profile/:id", async (req, res) => {
     const userId = req.user?.id;
     const { pin } = req.query; // PIN passed as query param from delete confirmation modal
 
-    if (id !== userId && req.user?.role !== "admin") {
+    if (id !== userId && !["ADMIN", "SUPER_ADMIN"].includes(String(req.user?.role || req.user?.type || "").toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error("Unauthorized to delete this profile", null, 403)
       );
@@ -361,7 +455,7 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
     }
 
     // Validate file size (max 5MB)
-    const maxSizeMB = 5;
+    const maxSizeMB = 10;
     if (req.file.size > maxSizeMB * 1024 * 1024) {
       return res.status(400).json(
         ApiResponse.error(`Image size must be less than ${maxSizeMB}MB`, null, 400)
@@ -468,6 +562,45 @@ router.delete("/agent/profile/profile-image", async (req, res) => {
     );
   }
 });
+
+// ── Helpers ──
+/**
+ * Map an incoming profile body (accepts both DB column names and the
+ * frontend-friendly aliases) to a clean Prisma update object. Only keys with
+ * a real value are included, so updates are always partial/non-destructive.
+ */
+function mapAgentProfileBody(body = {}) {
+  const data = {};
+  const setStr = (col, value) => {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      data[col] = String(value).trim();
+    }
+  };
+
+  setStr("full_name", body.full_name ?? body.name);
+  setStr("email", body.email);
+  setStr("phone_number", body.phone_number ?? body.phone);
+  setStr("lic_agent_code", body.lic_agent_code ?? body.license_number);
+  setStr("agent_code", body.agent_code);
+  setStr("branch_division", body.branch_division ?? body.branch);
+  setStr("position_designation", body.position_designation ?? body.designation);
+  setStr("qualification", body.qualification);
+  setStr("short_bio", body.short_bio ?? body.bio);
+  setStr("specialization", body.specialization);
+
+  if (body.years_of_experience !== undefined && body.years_of_experience !== null && body.years_of_experience !== "") {
+    data.years_of_experience = body.years_of_experience;
+  }
+  if (body.license_expiry) {
+    const d = new Date(body.license_expiry);
+    if (!isNaN(d.getTime())) data.license_expiry = d;
+  }
+  if (body.profile_image_url && String(body.profile_image_url).trim()) {
+    data.profile_picture = String(body.profile_image_url).trim();
+  }
+
+  return data;
+}
 
 // ── Validation Helpers ──
 function isValidPhone(phone) {

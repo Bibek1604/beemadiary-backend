@@ -156,7 +156,9 @@ router.get('/personal-notes', verifyToken, async (req, res) => {
 router.post('/personal-notes', verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
-    const { title, content, category = 'GENERAL' } = req.body;
+    const { title, content } = req.body;
+    // Accept both `category` (canonical) and `tag` (legacy / frontend alias)
+    const category = req.body.category || req.body.tag || 'GENERAL';
 
     if (!agentId) {
       return res.status(401).json(
@@ -225,7 +227,7 @@ router.get('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Check ownership - only agent who created note can view it
-    if (note.agent_id !== agentId && req.user?.role !== 'admin') {
+    if (note.agent_id !== agentId && !['ADMIN', 'SUPER_ADMIN'].includes(String(req.user?.role || req.user?.type || '').toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error('Unauthorized to access this note', null, 403)
       );
@@ -259,7 +261,9 @@ router.patch('/personal-notes/:noteId', verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
     const { noteId } = req.params;
-    const { title, content, tag } = req.body;
+    const { title, content } = req.body;
+    // Accept both `category` (canonical) and `tag` (legacy / frontend alias)
+    const category = req.body.category || req.body.tag;
 
     if (!agentId) {
       return res.status(401).json(
@@ -279,7 +283,7 @@ router.patch('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Check ownership
-    if (note.agent_id !== agentId && req.user?.role !== 'admin') {
+    if (note.agent_id !== agentId && !['ADMIN', 'SUPER_ADMIN'].includes(String(req.user?.role || req.user?.type || '').toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error('Unauthorized to update this note', null, 403)
       );
@@ -293,7 +297,7 @@ router.patch('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Validate input
-    const errors = validateNoteData({ title, content, tag }, true);
+    const errors = validateNoteData({ title, content, category }, true);
     if (errors.length > 0) {
       return res.status(400).json(
         ApiResponse.error('Validation failed', errors, 400)
@@ -308,8 +312,9 @@ router.patch('/personal-notes/:noteId', verifyToken, async (req, res) => {
     if (title !== undefined) {
       updateData.title = title.trim() || generateTitle(content || note.content);
     }
-    if (tag !== undefined && NOTE_TAGS.includes(tag)) {
-      updateData.tag = tag;
+    if (category !== undefined && NOTE_TAGS.includes(category)) {
+      // Store on the canonical `category` field (formatNote also falls back to `tag`)
+      updateData.category = category;
     }
 
     // Update note
@@ -358,7 +363,7 @@ router.delete('/personal-notes/:noteId', verifyToken, async (req, res) => {
     }
 
     // Check ownership
-    if (note.agent_id !== agentId && req.user?.role !== 'admin') {
+    if (note.agent_id !== agentId && !['ADMIN', 'SUPER_ADMIN'].includes(String(req.user?.role || req.user?.type || '').toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error('Unauthorized to delete this note', null, 403)
       );
@@ -394,7 +399,7 @@ router.delete('/personal-notes/:noteId/permanent', verifyToken, async (req, res)
     const { noteId } = req.params;
 
     // Only admins can permanently delete notes
-    if (req.user?.role !== 'admin') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(String(req.user?.role || req.user?.type || '').toUpperCase())) {
       return res.status(403).json(
         ApiResponse.error('Only admins can permanently delete notes', null, 403)
       );
