@@ -1198,6 +1198,7 @@ router.get("/client/search", async (req, res) => {
             discount_scheme: true,
             premium_due_date: true,
             premium_paid: true,
+            premium_status: true,
             bank_name: true,
             bank_account: true,
             branch: true,
@@ -1244,6 +1245,10 @@ router.get("/client/search", async (req, res) => {
         policy_number: latestPolicy?.policy_number || null,
         premium_due_date_ad: latestPolicy?.premium_due_date || null,
         policy_status: latestPolicy?.status || null,
+        premium_amount: latestPolicy?.premium_amount ?? null,
+        premium_status:
+          latestPolicy?.premium_status ||
+          (latestPolicy?.premium_paid ? "PAID" : latestPolicy ? "DUE" : null),
       };
     });
 
@@ -1777,20 +1782,8 @@ router.delete(["/client/:clientId", "/enrollment/:clientId", "/enrollment/:clien
     }
 
     // Use the resolved Mongo `id`, not the URL param (which may be the business id).
-    await prisma.client.update({
-      where: { id: client.id },
-      data: { deleted_at: new Date(), status: "INACTIVE" },
-    });
+    const deletedAt = new Date();
 
-    res.status(200).json(
-      ApiResponse.success("Client deleted / deactivated successfully", { client_id: client.id })
-    );
-  } catch (error) {
-    console.error("[Delete Client Error]:", error);
-    res.status(500).json(
-      ApiResponse.error("Failed to delete client", error, 500)
-    );
-  }
-});
-
-module.exports = router;
+    // Cascade: soft-delete every policy that belongs to this client so they
+    // don't linger as orphaned/active records inflating dashboard counts.
+    const policyCascade = await prisma.policy.

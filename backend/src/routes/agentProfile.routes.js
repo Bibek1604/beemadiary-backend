@@ -15,7 +15,7 @@ const console = {
 const storage = multer.memoryStorage();
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
   fileFilter: (req, file, cb) => {
     const allowedMimeTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
     if (allowedMimeTypes.includes(file.mimetype)) {
@@ -455,7 +455,7 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
     }
 
     // Validate file size (max 5MB)
-    const maxSizeMB = 10;
+    const maxSizeMB = 5;
     if (req.file.size > maxSizeMB * 1024 * 1024) {
       return res.status(400).json(
         ApiResponse.error(`Image size must be less than ${maxSizeMB}MB`, null, 400)

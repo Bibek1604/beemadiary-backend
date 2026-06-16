@@ -43,7 +43,7 @@ router.post(
 
     // Validate image
     const validation = imageHandler.validateImageFile(req.file, {
-      maxSize: 10 * 1024 * 1024, // 10MB
+      maxSize: 5 * 1024 * 1024, // 5MB
       allowedMimes: ['image/jpeg', 'image/png', 'image/webp'],
     });
 
@@ -379,7 +379,7 @@ router.post(
         buffer,
         fileName,
         folder,
-        { maxSize: 10 * 1024 * 1024 }
+        { maxSize: 5 * 1024 * 1024 }
       );
 
       if (!result.success) {

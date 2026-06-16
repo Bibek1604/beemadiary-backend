@@ -77,7 +77,7 @@ async function buildDashboard(agentId, query) {
   }
 
   // ---- Load agent's data in parallel ----
-  const [clients, policies] = await Promise.all([
+  const [clients, allPolicies] = await Promise.all([
     prisma.client.findMany({
       where: { agent_id: agentId, deleted_at: null },
       select: {
@@ -104,11 +104,17 @@ async function buildDashboard(agentId, query) {
         premium_due_date: true,
         premium_status: true,
         client_id: true,
+        created_at: true,
       },
     }),
   ]);
 
   const clientById = new Map(clients.map((c) => [c.id, c]));
+
+  // Only consider policies that still belong to a live (non-deleted) client.
+  // This self-heals any orphaned policies left over from older deletions so
+  // counts like Active Portfolio, dues and overdue stay consistent with reality.
+  const policies = allPolicies.filter((p) => clientById.has(p.client_id));
 
   // ---- Portfolio stats ----
   const totalClients = clients.length;
@@ -216,7 +222,9 @@ async function buildDashboard(agentId, query) {
   const docYears = new Set([today.year]);
   const monthlyCounts = new Array(12).fill(0);
   policies.forEach((p) => {
-    const docParts = parseDateParts(p.doc);
+    // Date of Commencement is optional; fall back to when the policy was
+    // recorded so the graph still reflects real activity instead of "No data".
+    const docParts = parseDateParts(p.doc) || parseDateParts(p.created_at);
     if (!docParts) return;
     docYears.add(docParts.year);
     if (docParts.year === graphYear) {

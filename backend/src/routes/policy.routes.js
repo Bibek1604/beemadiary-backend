@@ -940,6 +940,65 @@ router.post("/policy/sync-lapsed", async (req, res) => {
 });
 
 /**
+ * POST /api/policy/cleanup-orphans
+ * Soft-delete every policy whose owning client no longer exists (the client
+ * was deleted or is missing). Keeps policy data consistent with clients so
+ * orphaned policies don't linger in counts, dues or the dashboard graph.
+ * Admins clean up all agents; a regular agent cleans up only their own.
+ */
+router.post("/policy/cleanup-orphans", async (req, res) => {
+  try {
+    const agentId = req.user?.id;
+    const isAdmin = isAdminUser(req.user);
+
+    if (!agentId) {
+      return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
+    }
+
+    const whereClause = isAdmin ? {} : { agent_id: agentId };
+
+    // Live (non-deleted) clients in scope, and all active policies in scope.
+    const [liveClients, policies] = await Promise.all([
+      prisma.client.findMany({
+        where: { ...whereClause, deleted_at: null },
+        select: { id: true },
+      }),
+      prisma.policy.findMany({
+        where: { ...whereClause, deleted_at: null },
+        select: { id: true, client_id: true },
+      }),
+    ]);
+
+    const liveClientIds = new Set(liveClients.map((c) => String(c.id)));
+
+    // A policy is orphaned when it has no client_id or its client is gone.
+    const orphanIds = policies
+      .filter((p) => !p.client_id || !liveClientIds.has(String(p.client_id)))
+      .map((p) => p.id);
+
+    let removedCount = 0;
+    if (orphanIds.length > 0) {
+      await prisma.policy.updateMany({
+        where: { id: { in: orphanIds } },
+        data: { deleted_at: new Date(), status: "INACTIVE" },
+      });
+      removedCount = orphanIds.length;
+    }
+
+    res.status(200).json(
+      ApiResponse.success(
+        `Removed ${removedCount} orphaned ${removedCount === 1 ? "policy" : "policies"} with no client.`,
+        { removed_count: removedCount, policy_ids: orphanIds }
+      )
+    );
+  } catch (error) {
+    res.status(500).json(
+      ApiResponse.error("Failed to clean up orphaned policies", null, 500)
+    );
+  }
+});
+
+/**
  * PUT /api/policy/:policyId/pay-installment
  * Record ONE month's premium as paid: advance the due date by exactly one
  * month (clearing a single overdue installment) instead of clearing all
