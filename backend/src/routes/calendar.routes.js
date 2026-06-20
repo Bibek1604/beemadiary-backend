@@ -1,9 +1,19 @@
 const express = require('express');
 const { prisma } = require('../config/db');
 const ApiResponse = require('../utils/apiResponse');
+const logger = require('../utils/logger');
 const { verifyToken } = require('../middleware/auth');
 
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 
 // ============ SCHEMAS & CONSTANTS ============
 const EVENT_TYPES = ['MEETING', 'FOLLOW_UP', 'RENEWAL', 'PREMIUM', 'PERSONAL', 'OTHER'];
@@ -213,13 +223,13 @@ router.get(['/', ''], verifyToken, async (req, res) => {
 
     // ===== EXECUTE QUERIES =====
     const [total, events] = await Promise.all([
-      prisma.event.count({ where }).catch(() => 0),
+      prisma.event.count({ where }).catch((e) => { logger.error('[calendar] event count failed', e); return 0; }),
       prisma.event.findMany({
         where,
         orderBy: { event_date: 'asc' },
         skip: (pageNum - 1) * limitNum,
         take: limitNum,
-      }).catch(() => []),
+      }).catch((e) => { logger.error('[calendar] event find failed', e); return []; }),
     ]);
 
     // ===== FORMAT RESPONSE =====
@@ -227,7 +237,7 @@ router.get(['/', ''], verifyToken, async (req, res) => {
       try {
         return formatEvent(event);
       } catch (err) {
-        console.error('[Format Event Error]:', err);
+        logger.error('[Format Event Error]:', err);
         return null;
       }
     }).filter(e => e !== null);
@@ -250,7 +260,7 @@ router.get(['/', ''], verifyToken, async (req, res) => {
       )
     );
   } catch (error) {
-    console.error('[GET /api/calendar Error]:', error.message);
+    logger.error('[GET /api/calendar Error]:', error);
 
     // Handle specific Prisma errors
     if (error.code === 'P2015' || error.code === 'P2023') {
@@ -350,7 +360,7 @@ router.post(['/', ''], verifyToken, async (req, res) => {
         );
       }
     } catch (err) {
-      console.error('[Verify Agent Error]:', err.message);
+      logger.error('[Verify Agent Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Failed to verify agent credentials', null, 400)
       );
@@ -378,7 +388,7 @@ router.post(['/', ''], verifyToken, async (req, res) => {
         },
       });
     } catch (err) {
-      console.error('[Create Event DB Error]:', err.code, err.message);
+      logger.error('[Create Event DB Error]:', err);
 
       // Map Prisma error codes to HTTP status
       if (err.code === 'P2003') {
@@ -416,7 +426,7 @@ router.post(['/', ''], verifyToken, async (req, res) => {
     try {
       formattedEvent = formatEvent(event);
     } catch (err) {
-      console.error('[Format Event Error]:', err.message);
+      logger.error('[Format Event Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Event created but failed to format response', null, 400)
       );
@@ -428,7 +438,7 @@ router.post(['/', ''], verifyToken, async (req, res) => {
     );
 
   } catch (error) {
-    console.error('[POST /api/calendar Error]:', error.message, error.code);
+    logger.error('[POST /api/calendar Error]:', error);
 
     // Handle specific error types
     if (error.name === 'SyntaxError') {
@@ -476,7 +486,7 @@ router.get(['/:eventId', '/:eventId/'], verifyToken, async (req, res, next) => {
         where: { id: eventId.trim() },
       });
     } catch (err) {
-      console.error('[Find Event Error]:', err.message);
+      logger.error('[Find Event Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Invalid event ID format', null, 400)
       );
@@ -508,7 +518,7 @@ router.get(['/:eventId', '/:eventId/'], verifyToken, async (req, res, next) => {
     try {
       formattedEvent = formatEvent(event);
     } catch (err) {
-      console.error('[Format Event Error]:', err.message);
+      logger.error('[Format Event Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Failed to format event data', null, 400)
       );
@@ -519,7 +529,7 @@ router.get(['/:eventId', '/:eventId/'], verifyToken, async (req, res, next) => {
     );
 
   } catch (error) {
-    console.error('[GET /:eventId Error]:', error.message);
+    logger.error('[GET /:eventId Error]:', error);
     res.status(400).json(
       ApiResponse.error('Failed to retrieve event', null, 400)
     );
@@ -558,7 +568,7 @@ router.patch(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
         where: { id: eventId.trim() },
       });
     } catch (err) {
-      console.error('[Find Event Error]:', err.message);
+      logger.error('[Find Event Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Invalid event ID format', null, 400)
       );
@@ -646,7 +656,7 @@ router.patch(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
         data: updateData,
       });
     } catch (err) {
-      console.error('[Update Error]:', err.code, err.message);
+      logger.error('[Update Error]:', err);
 
       if (err.code === 'P2025') {
         return res.status(404).json(
@@ -676,7 +686,7 @@ router.patch(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
     try {
       formattedEvent = formatEvent(updatedEvent);
     } catch (err) {
-      console.error('[Format Error]:', err.message);
+      logger.error('[Format Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Event updated but failed to format response', null, 400)
       );
@@ -687,7 +697,7 @@ router.patch(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
     );
 
   } catch (error) {
-    console.error('[PATCH /:eventId Error]:', error.message);
+    logger.error('[PATCH /:eventId Error]:', error);
     res.status(400).json(
       ApiResponse.error('Failed to update event', null, 400)
     );
@@ -724,7 +734,7 @@ router.delete(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
         where: { id: eventId.trim() },
       });
     } catch (err) {
-      console.error('[Find Event Error]:', err.message);
+      logger.error('[Find Event Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Invalid event ID format', null, 400)
       );
@@ -752,7 +762,7 @@ router.delete(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
         data: { deleted_at: new Date() },
       });
     } catch (err) {
-      console.error('[Delete Error]:', err.code, err.message);
+      logger.error('[Delete Error]:', err);
 
       if (err.code === 'P2025') {
         return res.status(404).json(
@@ -774,7 +784,7 @@ router.delete(['/:eventId', '/:eventId/'], verifyToken, async (req, res) => {
     );
 
   } catch (error) {
-    console.error('[DELETE /:eventId Error]:', error.message);
+    logger.error('[DELETE /:eventId Error]:', error);
     res.status(400).json(
       ApiResponse.error('Failed to delete event', null, 400)
     );
@@ -819,7 +829,7 @@ router.get(['/upcoming', '/upcoming/'], verifyToken, async (req, res) => {
         take: 10,
       });
     } catch (err) {
-      console.error('[Query Error]:', err.message);
+      logger.error('[Query Error]:', err);
       return res.status(400).json(
         ApiResponse.error('Failed to fetch upcoming events', null, 400)
       );
@@ -830,7 +840,7 @@ router.get(['/upcoming', '/upcoming/'], verifyToken, async (req, res) => {
       try {
         return formatEvent(event);
       } catch (err) {
-        console.error('[Format Error]:', err);
+        logger.error('[Format Error]:', err);
         return null;
       }
     }).filter(Boolean);
@@ -850,7 +860,7 @@ router.get(['/upcoming', '/upcoming/'], verifyToken, async (req, res) => {
     );
 
   } catch (error) {
-    console.error('[GET /upcoming Error]:', error.message);
+    logger.error('[GET /upcoming Error]:', error);
     res.status(400).json(
       ApiResponse.error('Failed to fetch upcoming events', null, 400)
     );

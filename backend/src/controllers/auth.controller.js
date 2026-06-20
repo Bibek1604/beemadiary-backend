@@ -7,6 +7,7 @@ const adminLogin = asyncHandler(async (req, res) => {
   const userAgent = req.headers["user-agent"];
   const result = await authService.adminLogin(email, password, ipAddress, userAgent);
   return res.status(200).json({
+    success:      true,
     status:       true,
     message:      "Login successful",
     accessToken:  result.accessToken,
@@ -21,6 +22,7 @@ const agentLogin = asyncHandler(async (req, res) => {
   const userAgent = req.headers["user-agent"];
   const result = await authService.agentLogin(email, password, ipAddress, userAgent);
   return res.status(200).json({
+    success:      true,
     status:       true,
     message:      "Login successful",
     accessToken:  result.accessToken,
@@ -36,6 +38,7 @@ const agentRegister = asyncHandler(async (req, res) => {
   const userAgent = req.headers["user-agent"];
   const result = await authService.agentRegister({ email, password, full_name, phone_number }, ipAddress, userAgent);
   return res.status(201).json({
+    success:      true,
     status:       true,
     message:      "Registration successful",
     accessToken:  result.accessToken,
@@ -50,10 +53,11 @@ const refreshToken = asyncHandler(async (req, res) => {
   const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   const userAgent = req.headers["user-agent"];
   if (!raw) {
-    return res.status(401).json({ status: false, message: "Refresh token is required" });
+    return res.status(401).json({ success: false, status: false, message: "Refresh token is required" });
   }
   const tokens = await authService.refreshTokens(raw, ipAddress, userAgent);
   return res.status(200).json({
+    success:      true,
     status:       true,
     message:      "Token refreshed successfully",
     accessToken:  tokens.accessToken,
@@ -74,18 +78,18 @@ const changePassword = asyncHandler(async (req, res) => {
     errors.push("New password and confirmation do not match");
   }
   if (errors.length > 0) {
-    return res.status(400).json({ status: false, message: "Validation failed", errors });
+    return res.status(400).json({ success: false, status: false, message: "Validation failed", errors });
   }
 
   const authHeader = req.headers.authorization || "";
   const currentToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   const result = await authService.changePassword(req.user, String(currentPassword), String(newPassword), currentToken);
-  return res.status(200).json({ status: true, message: result.message });
+  return res.status(200).json({ success: true, status: true, message: result.message });
 });
 
 const logoutAll = asyncHandler(async (req, res) => {
   const result = await authService.logoutAll(req.user.id);
-  return res.status(200).json({ status: true, message: result.message });
+  return res.status(200).json({ success: true, status: true, message: result.message });
 });
 
 const adminRegister = asyncHandler(async (req, res) => {
@@ -94,18 +98,20 @@ const adminRegister = asyncHandler(async (req, res) => {
   const userAgent = req.headers["user-agent"];
   const result = await authService.adminBootstrapRegister({ email, password, first_name, last_name }, ipAddress, userAgent);
   return res.status(201).json({
-    status: true,
-    message: "Admin account created",
-    accessToken: result.accessToken,
+    success:      true,
+    status:       true,
+    message:      "Admin account created",
+    accessToken:  result.accessToken,
     refreshToken: result.refreshToken,
-    data: result.admin,
+    data:         result.admin,
   });
 });
 
 const forgotPassword = asyncHandler(async (_req, res) => {
   // No outbound email infrastructure is configured for this deployment.
   return res.status(501).json({
-    status: false,
+    success: false,
+    status:  false,
     message: "Password reset by email is not available. Please contact your administrator to reset your password.",
   });
 });
@@ -113,11 +119,9 @@ const forgotPassword = asyncHandler(async (_req, res) => {
 const logout = asyncHandler(async (req, res) => {
   const authHeader = req.headers.authorization || "";
   const accessToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  const userId = req.user?.id;
-  if (userId && accessToken) {
-    await authService.logout(userId, accessToken).catch(() => {});
-  }
-  return res.status(200).json({ status: true, message: "Logged out successfully" });
+  const rawRefreshToken = req.body?.refreshToken || req.headers["x-refresh-token"] || null;
+  await authService.logout(accessToken, rawRefreshToken).catch(() => {});
+  return res.status(200).json({ success: true, status: true, message: "Logged out successfully" });
 });
 
 module.exports = { adminLogin, agentLogin, agentRegister, adminRegister, changePassword, logoutAll, forgotPassword, refreshToken, logout };

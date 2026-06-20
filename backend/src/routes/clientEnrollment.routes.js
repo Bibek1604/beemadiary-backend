@@ -1,10 +1,23 @@
 const express = require("express");
+const path = require("path");
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const { collectBoundaryErrors } = require("../middleware/boundaryGuard");
+const { maybePaginate } = require("../utils/pagination");
 const multer = require("multer");
 const { prisma, Prisma } = require("../config/db");
 const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryHelper");
+const logger = require("../utils/logger");
 const {
   shapeEnrollmentPayload,
   shapeClientRecord,
@@ -13,23 +26,76 @@ const {
 
 // Configure Multer for image uploads
 const storage = multer.memoryStorage();
+
+const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+const MAX_FILE_SIZE_MB = 10;
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+  limits: { fileSize: MAX_FILE_SIZE_BYTES }, // 10 MB max
   fileFilter: (req, file, cb) => {
-    const allowedMimeTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "image/gif",
-    ];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error("Invalid file type. Only image files are allowed."));
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      const err = new Error(
+        "Invalid file type. Only JPG, JPEG, PNG, and WEBP images are allowed."
+      );
+      err.code = "INVALID_FILE_TYPE";
+      return cb(err);
     }
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      const err = new Error(
+        "Invalid file extension. Allowed: .jpg, .jpeg, .png, .webp"
+      );
+      err.code = "INVALID_FILE_EXTENSION";
+      return cb(err);
+    }
+    cb(null, true);
   },
 });
+
+/**
+ * Wraps multer upload.fields() so that MulterError / custom upload errors
+ * are converted into proper HTTP responses instead of crashing the handler.
+ * Keeps 100 % backward-compat: the actual route logic is unchanged.
+ */
+const handleUpload = (fields) => (req, res, next) => {
+  upload.fields(fields)(req, res, (err) => {
+    if (!err) {
+      // BVA guard (GLOBAL-003): multipart body is only available after multer parses it.
+      const boundaryErrors = collectBoundaryErrors(req.body);
+      if (boundaryErrors.length > 0) {
+        return res.status(400).json(ApiResponse.error("Validation failed", boundaryErrors, 400));
+      }
+      return next();
+    }
+
+    logger.warn("[UPLOAD] File upload validation failed", { code: err.code, message: err.message });
+
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json(
+          ApiResponse.error(`Image size cannot exceed ${MAX_FILE_SIZE_MB}MB`, null, 413)
+        );
+      }
+      return res.status(400).json(
+        ApiResponse.error(`File upload error: ${err.message}`, null, 400)
+      );
+    }
+
+    if (err.code === "INVALID_FILE_TYPE" || err.code === "INVALID_FILE_EXTENSION") {
+      return res.status(422).json(
+        ApiResponse.error(err.message, null, 422)
+      );
+    }
+
+    logger.error("[UPLOAD] Unexpected upload error", err);
+    return res.status(500).json(
+      ApiResponse.error("File upload failed. Please try again.", null, 500)
+    );
+  });
+};
 
 const parseMaybeJson = (value, fallback = {}) => {
   if (value === undefined || value === null || value === "") return fallback;
@@ -121,10 +187,22 @@ const normalizePremiumPaidValue = (premiumPaidInput, premiumAmountInput) => {
   return undefined;
 };
 
+/**
+ * Strips XSS vectors (<, >) and MongoDB operator-injection prefixes (${ $()
+ * from a string. Does NOT alter the field name, structure, or business logic.
+ */
+const sanitizeString = (value) => {
+  if (typeof value !== "string") return value;
+  return value
+    .replace(/[<>]/g, "")
+    .replace(/\$\s*[{(]/g, "")
+    .trim();
+};
+
 const uploadFileToCloud = async (file, folder, publicId) => {
   const result = await uploadToCloudinary(file.buffer, folder, publicId);
   return {
-    url: result.secure_url,
+    url: result.resilient_url,
     public_id: result.public_id,
     original_name: file.originalname,
     mime_type: file.mimetype,
@@ -170,21 +248,113 @@ router.use(authMiddleware);
 
 /**
  * @swagger
+ * components:
+ *   schemas:
+ *     ErrorResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: false
+ *         status:
+ *           type: boolean
+ *           example: false
+ *         message:
+ *           type: string
+ *           example: "Validation failed"
+ *         errors:
+ *           type: array
+ *           items:
+ *             type: object
+ *             properties:
+ *               field:
+ *                 type: string
+ *               message:
+ *                 type: string
+ *         code:
+ *           type: integer
+ *           example: 400
+ *     SuccessResponse:
+ *       type: object
+ *       properties:
+ *         success:
+ *           type: boolean
+ *           example: true
+ *         status:
+ *           type: boolean
+ *           example: true
+ *         message:
+ *           type: string
+ *           example: "Operation completed successfully"
+ *         data:
+ *           type: object
+ *         code:
+ *           type: integer
+ *           example: 200
+ */
+
+/**
+ * @swagger
  * /api/clients:
  *   get:
- *     summary: Get ALL clients (no parameters)
- *     description: Fetch all clients for the authenticated agent with their policies. No query parameters needed!
+ *     summary: List clients (supports optional pagination & search)
+ *     description: >
+ *       Fetch clients for the authenticated agent with their policies.
+ *       Calling without any query params returns all clients (up to 1000) — existing
+ *       frontend behaviour is fully preserved.
+ *       Supply `page` to enable paginated mode; `limit` caps at 1000.
  *     tags: [Client Enrollment]
  *     security:
  *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: "Page number (1-based). Omit to return all results."
+ *         example: 1
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 1000
+ *           default: 50
+ *         description: "Records per page. Only effective when `page` is provided. Max: 1000."
+ *         example: 50
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *           maxLength: 200
+ *         description: "Filter by first_name, last_name, phone, email, or client_id."
+ *         example: "Ram Kumar"
+ *       - in: query
+ *         name: sortBy
+ *         schema:
+ *           type: string
+ *           enum: [created_at, first_name, last_name, email, phone]
+ *           default: created_at
+ *         description: "Field to sort by."
+ *       - in: query
+ *         name: sortOrder
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: desc
+ *         description: "Sort direction."
  *     responses:
  *       200:
- *         description: All clients retrieved successfully
+ *         description: Clients retrieved successfully
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
  *                 status:
  *                   type: boolean
  *                   example: true
@@ -199,16 +369,16 @@ router.use(authMiddleware);
  *                       properties:
  *                         total_clients:
  *                           type: integer
- *                           example: 5
+ *                           example: 120
  *                         clients_with_policies:
  *                           type: integer
- *                           example: 3
+ *                           example: 90
  *                         clients_without_policies:
  *                           type: integer
- *                           example: 2
+ *                           example: 30
  *                         total_policies:
  *                           type: integer
- *                           example: 3
+ *                           example: 115
  *                     clients:
  *                       type: array
  *                       items:
@@ -220,7 +390,7 @@ router.use(authMiddleware);
  *                             example: "51911abe-4965-4526-a7ac-9dec2602e7b1"
  *                           client_id:
  *                             type: string
- *                             description: Random numeric BM formatted client ID (BM-{12 digits}) - USE THIS FOR DISPLAY
+ *                             description: "BM-formatted display ID (BM-{12 digits})"
  *                             example: "BM-987654321012"
  *                           first_name:
  *                             type: string
@@ -234,10 +404,40 @@ router.use(authMiddleware);
  *                             type: string
  *                           policies:
  *                             type: array
+ *                     pagination:
+ *                       type: object
+ *                       description: "Only present when `page` query param is supplied"
+ *                       properties:
+ *                         page:
+ *                           type: integer
+ *                           example: 1
+ *                         limit:
+ *                           type: integer
+ *                           example: 50
+ *                         total:
+ *                           type: integer
+ *                           example: 120
+ *                         total_pages:
+ *                           type: integer
+ *                           example: 3
+ *                         has_next:
+ *                           type: boolean
+ *                           example: true
+ *                         has_prev:
+ *                           type: boolean
+ *                           example: false
  *       401:
- *         description: Unauthorized - Authentication required
+ *         description: Unauthorized — Bearer token missing or invalid
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       500:
- *         description: Failed to get clients
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  */
 router.get("/clients", async (req, res) => {
   try {
@@ -249,44 +449,157 @@ router.get("/clients", async (req, res) => {
       );
     }
 
-    // Fetch ALL clients with their policies
-    const clients = await prisma.client.findMany({
-      where: {
-        agent_id: agentId,
-        deleted_at: null,
-      },
-      include: {
-        policies: {
-          where: { deleted_at: null },
-          orderBy: { created_at: "desc" },
+    // ── Pagination & filtering params (all optional; defaults preserve existing behaviour) ──
+    const rawPage    = parseInt(req.query.page,  10);
+    const rawLimit   = parseInt(req.query.limit, 10);
+    const page       = rawPage  > 0 ? rawPage  : null;   // null = no pagination
+    const limit      = rawLimit > 0 ? Math.min(rawLimit, 1000) : (page ? 50 : 1000);
+    const skip       = page ? (page - 1) * limit : 0;
+    const search     = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 200) : "";
+    const VALID_SORT_FIELDS = new Set(["created_at", "first_name", "last_name", "email", "phone"]);
+    const sortBy     = VALID_SORT_FIELDS.has(req.query.sortBy) ? req.query.sortBy : "created_at";
+    const sortOrder  = req.query.sortOrder === "asc" ? "asc" : "desc";
+    const VALID_STATUSES = new Set(["ACTIVE", "INACTIVE", "PENDING", "SUSPENDED", "REJECTED"]);
+    const rawStatus  = typeof req.query.status === "string" ? req.query.status.trim().toUpperCase() : "";
+    const statusFilter = VALID_STATUSES.has(rawStatus) ? rawStatus : null;
+
+    const whereClause = {
+      agent_id: agentId,
+      deleted_at: null,
+    };
+
+    if (statusFilter) {
+      whereClause.status = statusFilter;
+    }
+
+    if (search) {
+      whereClause.OR = [
+        { first_name:  { contains: search, mode: "insensitive" } },
+        { last_name:   { contains: search, mode: "insensitive" } },
+        { phone:       { contains: search, mode: "insensitive" } },
+        { email:       { contains: search, mode: "insensitive" } },
+        { client_id:   { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    // Fetch clients (paginated or all)
+    const [clients, totalCount] = await Promise.all([
+      prisma.client.findMany({
+        where: whereClause,
+        include: {
+          policies: {
+            where: { deleted_at: null },
+            orderBy: { created_at: "desc" },
+          },
         },
-      },
-      orderBy: { created_at: "desc" },
-      take: 1000, // Get up to 1000 clients
-    });
+        orderBy: { [sortBy]: sortOrder },
+        take: limit,
+        skip,
+      }),
+      prisma.client.count({ where: whereClause }),
+    ]);
 
     // Count statistics
     const stats = {
-      total_clients: clients.length,
+      total_clients: totalCount,
       clients_with_policies: clients.filter((c) => c.policies?.length > 0).length,
       clients_without_policies: clients.filter((c) => !c.policies || c.policies.length === 0).length,
       total_policies: clients.reduce((sum, c) => sum + (c.policies?.length || 0), 0),
     };
 
+    const shapedClients = clients.map(shapeClientRecord);
+    const responsePayload = { stats, clients: shapedClients };
+    if (page) {
+      responsePayload.pagination = {
+        page,
+        limit,
+        total: totalCount,
+        total_pages: Math.ceil(totalCount / limit),
+        has_next: page * limit < totalCount,
+        has_prev: page > 1,
+      };
+    }
+
     res.status(200).json(
-      ApiResponse.success("All clients retrieved", {
-        stats,
-        clients: clients,
-      })
+      ApiResponse.success("All clients retrieved", responsePayload)
     );
   } catch (error) {
-    console.error("[Get All Clients Error]:", error);
+    logger.error("[GET /clients] Failed to retrieve clients", error);
     res.status(500).json(
       ApiResponse.error("Failed to get all clients", null, 500)
     );
   }
 });
 
+/**
+ * @swagger
+ * /api/my-clients/stats:
+ *   get:
+ *     summary: Get aggregate client statistics for the authenticated agent
+ *     description: >
+ *       Returns client totals, birthday count for the current month, and a
+ *       per-month enrollment breakdown for the current calendar year.
+ *       Used by the Achievements page and dashboards.
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Client statistics retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Client stats retrieved"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     total_clients:
+ *                       type: integer
+ *                       example: 120
+ *                     clients_with_policies:
+ *                       type: integer
+ *                       example: 90
+ *                     clients_without_policies:
+ *                       type: integer
+ *                       example: 30
+ *                     total_policies:
+ *                       type: integer
+ *                       example: 115
+ *                     birthdays_this_month:
+ *                       type: integer
+ *                       example: 4
+ *                     monthWiseStats:
+ *                       type: array
+ *                       description: "Per-month enrollment count for the current year (months 1-12)"
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           month:
+ *                             type: integer
+ *                             example: 6
+ *                           count:
+ *                             type: integer
+ *                             example: 12
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
 /**
  * GET /api/my-clients/stats/
  * Aggregate client stats for the authenticated agent (used by the
@@ -337,11 +650,51 @@ router.get(["/my-clients/stats", "/my-clients/stats/"], async (req, res) => {
 
     res.status(200).json(ApiResponse.success("Client stats retrieved", stats));
   } catch (error) {
-    console.error("[Get Client Stats Error]:", error);
+    logger.error("[GET /my-clients/stats] Failed to retrieve client stats", error);
     res.status(500).json(ApiResponse.error("Failed to get client stats", null, 500));
   }
 });
 
+/**
+ * @swagger
+ * /api/my-achievements:
+ *   get:
+ *     summary: Get agent achievement badges
+ *     description: >
+ *       Achievement badges are computed on the frontend from the /my-clients/stats data.
+ *       This endpoint returns an empty list placeholder so the frontend receives a 200
+ *       and overlays its locally-computed badges. No server-side unlock store exists yet.
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Achievements retrieved (may be empty)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Achievements retrieved"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     results:
+ *                       type: array
+ *                       items: {}
+ *                       example: []
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
 /**
  * GET /api/my-achievements/
  * Achievement badges are derived on the client from the stats above; there is
@@ -478,7 +831,7 @@ router.get("/clients/all/detailed", async (req, res) => {
       })
     );
   } catch (error) {
-    console.error("[Get All Clients Detailed Error]:", error);
+    logger.error("[GET /clients/all/detailed] Failed to retrieve detailed clients", error);
     res.status(500).json(
       ApiResponse.error("Failed to get all clients", null, 500)
     );
@@ -673,15 +1026,64 @@ router.get("/clients/all/detailed", async (req, res) => {
  *                           type: string
  *                           example: "BM-987654321012"
  *       400:
- *         description: Validation failed
+ *         description: Validation failed (missing required fields or bad format)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               message: "Validation failed"
+ *               errors:
+ *                 - message: "Full name is required"
+ *                 - message: "Phone must be exactly 10 numeric digits"
  *       401:
- *         description: Unauthorized
+ *         description: Unauthorized — Bearer token missing or expired
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       413:
+ *         description: Image file exceeds the 10 MB size limit
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               message: "Image size cannot exceed 10MB"
+ *       422:
+ *         description: Unsupported file type or extension
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               message: "Invalid file type. Only JPG, JPEG, PNG, and WEBP images are allowed."
  *       500:
- *         description: Failed to enroll client
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+/**
+ * @swagger
+ * /api/enrollment/create:
+ *   post:
+ *     summary: Enroll a client (alias of /api/client/enroll)
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       201: { description: Client enrolled successfully }
+ *       400: { description: Validation failed }
+ *       401: { description: Unauthorized }
  */
 router.post(
   ["/client/enroll", "/enrollment/create"],
-  upload.fields([
+  handleUpload([
     { name: "profile_picture", maxCount: 1 },
     { name: "images", maxCount: 10 },
     { name: "supporting_images", maxCount: 10 },
@@ -853,6 +1255,18 @@ router.post(
       return res.status(400).json(ApiResponse.error("Validation failed", errors, 400));
     }
 
+    // Uniqueness checks — email and phone must not already belong to an active client
+    const [emailConflict, phoneConflict] = await Promise.all([
+      prisma.client.findFirst({ where: { email, deleted_at: null } }),
+      prisma.client.findFirst({ where: { phone, deleted_at: null } }),
+    ]);
+    if (emailConflict) {
+      return res.status(409).json(ApiResponse.error("A client with this email address is already enrolled.", null, 409));
+    }
+    if (phoneConflict) {
+      return res.status(409).json(ApiResponse.error("A client with this phone number is already enrolled.", null, 409));
+    }
+
     // Generate random numeric BM ID (BM-{12 random digits})
     let clientId;
     let isUnique = false;
@@ -880,22 +1294,18 @@ router.post(
     const uploadFolderBase = `lic-insurance/client-enrollment/${clientId}`;
 
     const imageUploads = await Promise.all(
-      imageFiles.map((file, index) =>
-        uploadFileToCloud(file, `${uploadFolderBase}/images`, `${clientId}-image-${index + 1}`).then((result) => ({
+      imageFiles.map(async (file, index) => {
+        const result = await uploadFileToCloud(file, `${uploadFolderBase}/images`, `${clientId}-image-${index + 1}`);
+        return {
           label: imageLabels[index] || file.originalname,
           ...result,
-        }))
-      )
+        };
+      })
     );
 
     const profilePictureUpload = profilePictureFile
       ? await uploadFileToCloud(profilePictureFile, `${uploadFolderBase}/profile-picture`, `${clientId}-profile-picture`)
       : null;
-
-    // Email/phone are intentionally NOT unique: an agent may enroll multiple
-    // clients that share a contact number or email (e.g. family members), and
-    // the same person may be a client of more than one agent. No duplicate
-    // check is performed here.
 
     const clientData = {
       client_id: clientId,
@@ -981,20 +1391,22 @@ router.post(
         policyRecord = await prisma.policy.create({ data: policyDataWithClientId });
       }
     } catch (policyErr) {
-      console.error('[CLIENT_ENROLL] Policy create failed, rolling back client:', policyErr);
+      logger.error("[POST /client/enroll] Policy create failed, rolling back client", policyErr);
       try { await prisma.client.delete({ where: { id: client.id } }); } catch (_) {}
       throw policyErr;
     }
     const result = { client, policy: policyRecord };
 
-    console.log('[CLIENT_ENROLL] Policy data created:', {
+    logger.info("[POST /client/enroll] Client enrolled successfully", {
+      agent_id: agentId,
+      client_id: client.id,
+      bm_client_id: clientId,
       plan_name: policyDataToCreate.plan_name,
       plan_no: policyDataToCreate.plan_no,
       policy_number: policyDataToCreate.policy_number,
       sum_assured: policyDataToCreate.sum_assured,
       premium_amount: policyDataToCreate.premium_amount,
       bank_name: policyDataToCreate.bank_name,
-      bank_account: policyDataToCreate.bank_account,
       branch: policyDataToCreate.branch,
       premium_due_date: policyDataToCreate.premium_due_date,
       premium_status: policyDataToCreate.premium_status,
@@ -1016,7 +1428,7 @@ router.post(
       )
     );
   } catch (error) {
-    console.error("[Client Enroll Error]:", error);
+    logger.error("[POST /client/enroll] Enrollment failed", error, { agent_id: req.user?.id });
     return res.status(500).json(ApiResponse.error("Failed to enroll client", null, 500));
   }
 });
@@ -1125,24 +1537,15 @@ router.get("/client/search", async (req, res) => {
       );
     }
 
-    const requestView = shapeEnrollmentPayload(req.body || {}, {
-      profile_picture: req.files?.profile_picture?.[0]
-        ? {
-            originalname: req.files.profile_picture[0].originalname,
-            mimetype: req.files.profile_picture[0].mimetype,
-            size: req.files.profile_picture[0].size,
-          }
-        : null,
-      images: req.files?.images?.map((file) => ({
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-      })) || [],
-    });
-
     if (!query?.trim()) {
       return res.status(400).json(
         ApiResponse.error("Search query is required", null, 400)
+      );
+    }
+
+    if (query.trim().length > 200) {
+      return res.status(400).json(
+        ApiResponse.error("Search query must not exceed 200 characters", null, 400)
       );
     }
 
@@ -1248,10 +1651,10 @@ router.get("/client/search", async (req, res) => {
     });
 
     res.status(200).json(
-      ApiResponse.success("Clients found", normalizedClients)
+      ApiResponse.success("Clients found", maybePaginate(req, normalizedClients))
     );
   } catch (error) {
-    console.error("[Client Search Error]:", error);
+    logger.error("[GET /client/search] Search failed", error, { agent_id: req.user?.id });
     res.status(500).json(
       ApiResponse.error("Failed to search clients", null, 500)
     );
@@ -1285,6 +1688,21 @@ router.get("/client/search", async (req, res) => {
  *         description: Client not found
  *       500:
  *         description: Failed to get client details
+ */
+/**
+ * @swagger
+ * /api/enrollment/{clientId}:
+ *   get:
+ *     summary: Get client details (alias of GET /api/client/{clientId})
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: clientId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Client details retrieved }
+ *       404: { description: Client not found }
+ *       401: { description: Unauthorized }
  */
 router.get(["/client/:clientId", "/enrollment/:clientId"], async (req, res) => {
   try {
@@ -1338,7 +1756,7 @@ router.get(["/client/:clientId", "/enrollment/:clientId"], async (req, res) => {
       ApiResponse.success("Client details retrieved", responseData)
     );
   } catch (error) {
-    console.error("[Get Client Error]:", error);
+    logger.error("[GET /client/:clientId] Failed to retrieve client", error, { agent_id: req.user?.id, clientId: req.params?.clientId });
     res.status(500).json(
       ApiResponse.error("Failed to get client details", null, 500)
     );
@@ -1406,15 +1824,58 @@ router.get(["/client/:clientId", "/enrollment/:clientId"], async (req, res) => {
  *       401:
  *         description: Unauthorized
  *       403:
- *         description: Unauthorized to update this client
+ *         description: Unauthorized to update this client (ownership check failed)
  *       404:
- *         description: Client not found
+ *         description: Client not found or already deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       413:
+ *         description: Uploaded image exceeds the 10 MB size limit
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               message: "Image size cannot exceed 10MB"
+ *       422:
+ *         description: Validation error (invalid email, phone, bank account format, or file type)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               message: "Validation failed"
+ *               errors:
+ *                 - message: "Phone must be exactly 10 numeric digits"
  *       500:
- *         description: Failed to update client
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+/**
+ * @swagger
+ * /api/enrollment/{clientId}/update:
+ *   put:
+ *     summary: Update client (alias of PUT /api/client/{clientId})
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: clientId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Client updated successfully }
+ *       404: { description: Client not found }
+ *       401: { description: Unauthorized }
  */
 router.put(
   ["/client/:clientId", "/enrollment/:clientId/update"],
-  upload.fields([
+  handleUpload([
     { name: "profile_picture", maxCount: 1 },
     { name: "image", maxCount: 1 },
     { name: "document", maxCount: 1 },
@@ -1497,21 +1958,64 @@ router.put(
     const dob = firstValue(body.dob, body.date_of_birth, body.dateOfBirth);
     const age = firstValue(body.age);
 
-    if (firstName) updateData.first_name = firstName;
-    if (lastName) updateData.last_name = lastName;
-    if (email) updateData.email = email;
-    if (phone) updateData.phone = phone;
+    // Inline validation helpers (same rules as enroll)
+    const isValidEmail    = (v) => /^[a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(v);
+    const isValidPhone    = (v) => /^\d{10}$/.test(String(v).replace(/\D/g, "")) && String(v).trim().length === 10;
+    const isValidBankAcct = (v) => { const d = String(v).replace(/\D/g, ""); return d === String(v).trim() && d.length >= 1 && d.length <= 20; };
+
+    const updateErrors = [];
+    if (email && !isValidEmail(email))                   updateErrors.push("Invalid email format");
+    if (email && email.length > 255)                     updateErrors.push("Email must not exceed 255 characters");
+    if (phone && !isValidPhone(phone))                   updateErrors.push("Phone must be exactly 10 numeric digits");
+    if (secondaryPhone && !isValidPhone(secondaryPhone)) updateErrors.push("Secondary phone must be exactly 10 numeric digits");
+    if (gender?.trim()) {
+      const validGenders = ["male", "female", "child", "other"];
+      if (!validGenders.includes(gender.trim().toLowerCase())) {
+        updateErrors.push("Gender must be one of: male, female, child, other");
+      }
+    }
+    if (dob) {
+      const d = new Date(dob);
+      if (Number.isNaN(d.getTime()))  updateErrors.push("Invalid date of birth format");
+      else if (d > new Date())        updateErrors.push("Date of birth cannot be in the future");
+    }
+    if (age) {
+      const n = parseInt(age, 10);
+      if (Number.isNaN(n) || n < 0 || n > 120) updateErrors.push("Age must be between 0 and 120");
+    }
+    if (updateErrors.length > 0) {
+      return res.status(422).json(ApiResponse.error("Validation failed", updateErrors, 422));
+    }
+
+    // Uniqueness checks — exclude the current client when checking for conflicts
+    if (email || phone) {
+      const [emailConflict, phoneConflict] = await Promise.all([
+        email ? prisma.client.findFirst({ where: { email, deleted_at: null, NOT: { id: client.id } } }) : null,
+        phone ? prisma.client.findFirst({ where: { phone, deleted_at: null, NOT: { id: client.id } } }) : null,
+      ]);
+      if (emailConflict) {
+        return res.status(409).json(ApiResponse.error("This email address is already used by another client.", null, 409));
+      }
+      if (phoneConflict) {
+        return res.status(409).json(ApiResponse.error("This phone number is already used by another client.", null, 409));
+      }
+    }
+
+    if (firstName) updateData.first_name = sanitizeString(firstName);
+    if (lastName)  updateData.last_name  = sanitizeString(lastName);
+    if (email)     updateData.email      = sanitizeString(email);
+    if (phone)     updateData.phone      = phone;
     if (secondaryPhone) updateData.secondary_phone = secondaryPhone;
-    if (address) updateData.address = address;
-    if (profession) updateData.profession = profession;
-    if (memberGroup) updateData.member_group = memberGroup;
-    if (nomineeName) updateData.nominee_name = nomineeName;
-    if (nomineeRelation) updateData.relation_with_nominee = nomineeRelation;
-    if (fatherName?.trim()) updateData.father_name = fatherName.trim();
-    if (motherName?.trim()) updateData.mother_name = motherName.trim();
-    if (grandfatherName?.trim()) updateData.grandfather_name = grandfatherName.trim();
-    if (reasonForInsurance) updateData.reason_for_insurance = reasonForInsurance;
-    if (gender) updateData.gender = gender.toUpperCase();
+    if (address)   updateData.address    = sanitizeString(address);
+    if (profession) updateData.profession = sanitizeString(profession);
+    if (memberGroup) updateData.member_group = sanitizeString(memberGroup);
+    if (nomineeName) updateData.nominee_name = sanitizeString(nomineeName);
+    if (nomineeRelation) updateData.relation_with_nominee = sanitizeString(nomineeRelation);
+    if (fatherName?.trim())      updateData.father_name      = sanitizeString(fatherName.trim());
+    if (motherName?.trim())      updateData.mother_name      = sanitizeString(motherName.trim());
+    if (grandfatherName?.trim()) updateData.grandfather_name = sanitizeString(grandfatherName.trim());
+    if (reasonForInsurance) updateData.reason_for_insurance = sanitizeString(reasonForInsurance);
+    if (gender) updateData.gender = gender.trim().toUpperCase();
 
     if (dob) {
       const parsedDob = toDateOrNull(dob);
@@ -1520,7 +2024,7 @@ router.put(
 
     if (age) {
       const parsedAge = parseInt(age, 10);
-      if (!Number.isNaN(parsedAge) && parsedAge >= 0) {
+      if (!Number.isNaN(parsedAge) && parsedAge >= 0 && parsedAge <= 120) {
         updateData.age = parsedAge;
       }
     }
@@ -1548,7 +2052,7 @@ router.put(
 
     if (profilePictureFile && client.profile_picture_public_id) {
       await deleteFromCloudinary(client.profile_picture_public_id).catch((error) => {
-        console.warn("[CLIENT_UPDATE] Failed to delete old profile picture:", error?.message || error);
+        logger.warn("[PUT /client/:clientId] Failed to delete old profile picture from Cloudinary", { message: error?.message });
       });
     }
 
@@ -1571,18 +2075,19 @@ router.put(
           .filter((image) => image && typeof image === "object" && image.public_id)
           .map((image) =>
             deleteFromCloudinary(image.public_id).catch((error) => {
-              console.warn("[CLIENT_UPDATE] Failed to delete old supporting image:", error?.message || error);
+              logger.warn("[PUT /client/:clientId] Failed to delete old supporting image from Cloudinary", { message: error?.message });
             })
           )
       );
 
       const newImageUploads = await Promise.all(
-        imageFiles.map((file, index) =>
-          uploadFileToCloud(file, `${uploadFolderBase}/images`, `${client.id}-image-${Date.now()}-${index + 1}`).then((result) => ({
+        imageFiles.map(async (file, index) => {
+          const result = await uploadFileToCloud(file, `${uploadFolderBase}/images`, `${client.id}-image-${Date.now()}-${index + 1}`);
+          return {
             label: imageLabels[index] || file.originalname,
             ...result,
-          }))
-        )
+          };
+        })
       );
       updateData.images = newImageUploads;
     }
@@ -1604,12 +2109,18 @@ router.put(
     const branch = firstValue(body.branch, body.bank_branch, body.bankBranch);
     const policyStatus = firstValue(body.policy_status, body.policyStatus, body.status);
 
-    if (planName) policyUpdateData.plan_name = planName;
-    if (planNo) policyUpdateData.plan_no = planNo;
-    if (policyNumber) policyUpdateData.policy_number = policyNumber;
-    if (policyTerm) policyUpdateData.policy_term = policyTerm;
-    if (abPwb) policyUpdateData.ab_pwb = abPwb;
-    if (discountScheme) policyUpdateData.discount_scheme = discountScheme;
+    if (bankAccount && !isValidBankAcct(bankAccount)) {
+      return res.status(422).json(
+        ApiResponse.error("Bank account must contain only numeric digits (no letters or special characters)", null, 422)
+      );
+    }
+
+    if (planName) policyUpdateData.plan_name = sanitizeString(planName);
+    if (planNo) policyUpdateData.plan_no = sanitizeString(planNo);
+    if (policyNumber) policyUpdateData.policy_number = sanitizeString(policyNumber);
+    if (policyTerm) policyUpdateData.policy_term = sanitizeString(policyTerm);
+    if (abPwb) policyUpdateData.ab_pwb = sanitizeString(abPwb);
+    if (discountScheme) policyUpdateData.discount_scheme = sanitizeString(discountScheme);
     if (docAd) policyUpdateData.doc = docAd;
     if (premiumDueDate) policyUpdateData.premium_due_date = premiumDueDate;
     if (premiumDuePaid) {
@@ -1618,21 +2129,18 @@ router.put(
         policyUpdateData.premium_status = normalizedStatus;
       }
     }
-    if (bankName) policyUpdateData.bank_name = bankName;
+    if (bankName) policyUpdateData.bank_name = sanitizeString(bankName);
     if (bankAccount) policyUpdateData.bank_account = bankAccount;
-    if (branch) policyUpdateData.branch = branch;
+    if (branch) policyUpdateData.branch = sanitizeString(branch);
     if (policyStatus) policyUpdateData.status = normalizePolicyStatus(policyStatus);
     if (companyId) policyUpdateData.company_id = companyId;
 
-    console.log('[CLIENT_UPDATE] Policy update data:', {
-      plan_name: policyUpdateData.plan_name,
-      bank_name: policyUpdateData.bank_name,
-      bank_account: policyUpdateData.bank_account,
-      branch: policyUpdateData.branch,
-      premium_due_date: policyUpdateData.premium_due_date,
-      premium_paid: policyUpdateData.premium_paid,
-      status: policyUpdateData.status,
-      company_id: policyUpdateData.company_id,
+    logger.info("[PUT /client/:clientId] Updating client", {
+      agent_id: agentId,
+      client_internal_id: client.id,
+      client_bm_id: client.client_id,
+      client_fields_updated: Object.keys(updateData),
+      policy_fields_updated: Object.keys(policyUpdateData),
     });
 
     if (sumAssured) {
@@ -1662,7 +2170,6 @@ router.put(
       );
     }
 
-    // Use the resolved Mongo `id`, not the URL param (which may be the business id).
     const updatedClient = Object.keys(updateData).length > 0
       ? await prisma.client.update({
           where: { id: client.id },
@@ -1689,6 +2196,12 @@ router.put(
       Object.entries(updatedClient).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
 
+    logger.info("[PUT /client/:clientId] Client updated successfully", {
+      agent_id: agentId,
+      client_internal_id: client.id,
+      client_bm_id: client.client_id,
+    });
+
     res.status(200).json(
       ApiResponse.success("Client updated successfully", {
         data: shapeClientRecord(updatedClient),
@@ -1697,7 +2210,7 @@ router.put(
       })
     );
   } catch (error) {
-    console.error("[Update Client Error]:", error);
+    logger.error("[PUT /client/:clientId] Update failed", error, { agent_id: req.user?.id, clientId: req.params?.clientId });
     res.status(500).json(
       ApiResponse.error("Failed to update client", null, 500)
     );
@@ -1720,31 +2233,94 @@ router.put(
  *         required: true
  *         schema:
  *           type: string
- *         description: Client identifier
+ *         description: Client identifier (UUID or BM-formatted business ID)
  *       - in: query
  *         name: pin
  *         required: false
  *         schema:
  *           type: string
  *           example: "1234"
- *         description: Agent's 4-digit security PIN (required if agent has set one)
+ *         description: Agent's security PIN (required only if the agent has configured one)
  *     responses:
  *       200:
- *         description: Client deleted / deactivated
+ *         description: Client soft-deleted / deactivated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Client deleted / deactivated successfully"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     client_id:
+ *                       type: string
+ *                       example: "51911abe-4965-4526-a7ac-9dec2602e7b1"
  *       401:
  *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       403:
- *         description: Invalid security PIN
+ *         description: Forbidden - ownership check failed or invalid security PIN
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               message: "Invalid security PIN"
  *       404:
- *         description: Client not found
+ *         description: Client not found or already deleted
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
  *       500:
- *         description: Failed to delete client
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+/**
+ * @swagger
+ * /api/enrollment/{clientId}:
+ *   delete:
+ *     summary: Delete/deactivate client (alias of DELETE /api/client/{clientId})
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: clientId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Client deleted / deactivated successfully }
+ *       404: { description: Client not found }
+ *       401: { description: Unauthorized }
+ * /api/enrollment/{clientId}/delete:
+ *   delete:
+ *     summary: Delete/deactivate client (alias of DELETE /api/client/{clientId})
+ *     tags: [Client Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: clientId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Client deleted / deactivated successfully }
+ *       404: { description: Client not found }
+ *       401: { description: Unauthorized }
  */
 router.delete(["/client/:clientId", "/enrollment/:clientId", "/enrollment/:clientId/delete"], async (req, res) => {
   try {
     const agentId = req.user?.id;
     const { clientId } = req.params;
-    const { pin } = req.query; // Optional PIN from query params
+    const { pin } = req.query;
 
     if (!agentId) {
       return res.status(401).json(ApiResponse.error("Agent ID not found", null, 401));
@@ -1764,31 +2340,34 @@ router.delete(["/client/:clientId", "/enrollment/:clientId", "/enrollment/:clien
       return res.status(404).json(ApiResponse.error("Client not found", null, 404));
     }
 
-    // Verify ownership
     if (client.agent_id !== agentId && !["ADMIN", "SUPER_ADMIN"].includes(String(req.user?.role || req.user?.type || "").toUpperCase())) {
       return res.status(403).json(ApiResponse.error("Unauthorized to delete this client", null, 403));
     }
 
-    // If the client record has a security_pin set, require PIN before deletion
     if (client.security_pin && pin !== client.security_pin) {
       return res.status(403).json(
         ApiResponse.error("Invalid security PIN", null, 403)
       );
     }
 
-    // Use the resolved Mongo `id`, not the URL param (which may be the business id).
     await prisma.client.update({
       where: { id: client.id },
       data: { deleted_at: new Date(), status: "INACTIVE" },
+    });
+
+    logger.info("[DELETE /client/:clientId] Client soft-deleted", {
+      agent_id: agentId,
+      client_internal_id: client.id,
+      client_bm_id: client.client_id,
     });
 
     res.status(200).json(
       ApiResponse.success("Client deleted / deactivated successfully", { client_id: client.id })
     );
   } catch (error) {
-    console.error("[Delete Client Error]:", error);
+    logger.error("[DELETE /client/:clientId] Delete failed", error, { agent_id: req.user?.id, clientId: req.params?.clientId });
     res.status(500).json(
-      ApiResponse.error("Failed to delete client", error, 500)
+      ApiResponse.error("Failed to delete client", null, 500)
     );
   }
 });

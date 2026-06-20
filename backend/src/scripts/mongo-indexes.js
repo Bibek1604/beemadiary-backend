@@ -46,6 +46,20 @@ async function ensureIndexes() {
 
     { col: "event", index: { agent_id: 1, start: 1 }, opts: { name: "idx_event_agent_start" } },
     { col: "note",  index: { agent_id: 1 },           opts: { name: "idx_note_agent" } },
+
+    // --- Performance indexes for hot list/aggregate query paths (additive) ---
+    { col: "client", index: { agent_id: 1, deleted_at: 1, created_at: -1 }, opts: { name: "idx_client_agent_active_created" } },
+    { col: "policy", index: { agent_id: 1, deleted_at: 1, created_at: -1 }, opts: { name: "idx_policy_agent_active_created" } },
+    { col: "policy", index: { agent_id: 1, deleted_at: 1, status: 1 },      opts: { name: "idx_policy_agent_active_status" } },
+    { col: "policy", index: { agent_id: 1, premium_due_date: 1 },           opts: { name: "idx_policy_agent_due" } },
+    { col: "transaction", index: { deleted_at: 1, created_at: -1 },         opts: { name: "idx_txn_active_created" } },
+    { col: "agent", index: { deleted_at: 1, created_at: -1 },               opts: { name: "idx_agent_active_created" } },
+    { col: "company", index: { deleted_at: 1, created_at: -1 },             opts: { name: "idx_company_active_created" } },
+    { col: "bulkNotification", index: { deleted_at: 1, created_at: -1 },    opts: { name: "idx_bulknotif_active_created" } },
+    { col: "notification", index: { created_at: -1 },                       opts: { name: "idx_notification_created" } },
+    { col: "event", index: { agent_id: 1, deleted_at: 1, start: 1 },        opts: { name: "idx_event_agent_active_start" } },
+    { col: "note",  index: { agent_id: 1, deleted_at: 1, created_at: -1 },  opts: { name: "idx_note_agent_active_created" } },
+    { col: "accountLockout", index: { user_id: 1 }, opts: { unique: true, name: "uniq_lockout_user" } },
   ];
 
   for (const { col, index, opts } of specs) {

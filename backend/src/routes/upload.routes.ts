@@ -7,6 +7,7 @@ import imageHandler from '../utils/imageHandler';
 import { ResponseHandler } from '../utils/errorResponse';
 import { CONSTANTS } from '../config/constants';
 import { NotFoundError } from '../middleware/globalExceptionHandler';
+const logger = require('../utils/logger');
 
 const router = Router();
 
@@ -198,7 +199,7 @@ router.get(
     fileStream.pipe(res);
 
     fileStream.on('error', (error) => {
-      console.error('[File Stream Error]', error);
+      logger.error('[File Stream Error]', error);
       if (!res.headersSent) {
         res.status(CONSTANTS.STATUS_CODES.NOT_FOUND).json(
           ResponseHandler.error('File not found', CONSTANTS.STATUS_CODES.NOT_FOUND)

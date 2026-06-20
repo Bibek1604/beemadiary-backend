@@ -1,18 +1,23 @@
 const express = require("express");
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const { maybePaginate } = require("../utils/pagination");
 const { prisma } = require("../config/db");
 const businessDate = require("../utils/businessDate");
+const logger = require("../utils/logger");
 
 // Case-insensitive admin check (token carries role/type "ADMIN" / "SUPER_ADMIN")
 const isAdminUser = (u) => ["ADMIN", "SUPER_ADMIN"].includes(String(u?.role || u?.type || "").toUpperCase());
-
-const console = {
-  log() {},
-  error() {},
-  warn() {},
-};
 
 // All endpoints require authentication
 router.use(authMiddleware);
@@ -20,6 +25,41 @@ router.use(authMiddleware);
 /**
  * POST /api/policy/create
  * Create a new policy for a client
+ */
+/**
+ * @swagger
+ * /api/policy/create:
+ *   post:
+ *     summary: Create a new policy for a client
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [client_id, plan_name, plan_no, premium_amount]
+ *             properties:
+ *               client_id: { type: string, description: Client the policy belongs to }
+ *               plan_name: { type: string, maxLength: 100 }
+ *               plan_no: { type: string, maxLength: 50 }
+ *               policy_term: { type: string }
+ *               sum_assured: { type: number }
+ *               ab_pwb: { type: string }
+ *               doc: { type: string, description: Date of commencement }
+ *               maturity_time: { type: string }
+ *               premium_amount: { type: number, minimum: 0 }
+ *               discount_scheme: { type: string }
+ *               premium_due_date: { type: string }
+ *               bank_account: { type: string }
+ *               branch: { type: string }
+ *               status: { type: string, enum: [ACTIVE, INACTIVE, PENDING, LAPSED, EXPIRED] }
+ *     responses:
+ *       201: { description: Policy created successfully }
+ *       400: { description: Validation failed }
+ *       401: { description: Unauthorized }
  */
 router.post("/policy/create", async (req, res) => {
   try {
@@ -151,6 +191,16 @@ router.post("/policy/create", async (req, res) => {
 
     const policy = await prisma.policy.create({ data: policyData });
 
+    logger.info("[Policy] Created", {
+      action: "CREATE",
+      policyId: policy.id,
+      policyNumber: policy.policy_number,
+      planName: policy.plan_name,
+      agentId,
+      clientId: client_id,
+      timestamp: new Date().toISOString(),
+    });
+
     // Filter out null values
     const responseData = Object.fromEntries(
       Object.entries(policy).filter(([_, value]) => value !== null && value !== undefined && value !== "")
@@ -163,6 +213,7 @@ router.post("/policy/create", async (req, res) => {
       })
     );
   } catch (error) {
+    logger.error("[Policy] Create failed", error);
     res.status(500).json(
       ApiResponse.error("Failed to create policy", null, 500)
     );
@@ -352,6 +403,24 @@ router.get("/policies", async (req, res) => {
  * GET /api/policy/search
  * Search policies by client name, id, or phone
  */
+/**
+ * @swagger
+ * /api/policy/search:
+ *   get:
+ *     summary: Search policies by client name, plan, or policy number
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: query, name: query, schema: { type: string }, description: Search term }
+ *       - { in: query, name: client_id, schema: { type: string }, description: Restrict to one client }
+ *       - { in: query, name: status, schema: { type: string, enum: [ALL, PAID, UNPAID, LAPSED] }, description: Premium status filter }
+ *       - { in: query, name: page, schema: { type: integer }, description: 'Opt-in pagination; omit for full list' }
+ *       - { in: query, name: limit, schema: { type: integer, maximum: 100 }, description: Results per page (opt-in) }
+ *     responses:
+ *       200: { description: Policies found }
+ *       401: { description: Unauthorized }
+ */
 router.get("/policy/search", async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -365,7 +434,7 @@ router.get("/policy/search", async (req, res) => {
 
     if (!query?.trim()) {
       return res.status(200).json(
-        ApiResponse.success("Policies found", [])
+        ApiResponse.success("Policies found", maybePaginate(req, []))
       );
     }
 
@@ -442,7 +511,7 @@ router.get("/policy/search", async (req, res) => {
     }
 
     res.status(200).json(
-      ApiResponse.success("Policies found", rows)
+      ApiResponse.success("Policies found", maybePaginate(req, rows))
     );
   } catch (error) {
 
@@ -476,6 +545,18 @@ router.get("/policy/search", async (req, res) => {
 /**
  * GET /api/policy/outdated
  * Get all policies with outdated/unpaid premium dues (6+ months)
+ */
+/**
+ * @swagger
+ * /api/policy/outdated:
+ *   get:
+ *     summary: List policies past their premium due date
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Outdated policies retrieved }
+ *       401: { description: Unauthorized }
  */
 router.get("/policy/outdated", async (req, res) => {
   try {
@@ -527,6 +608,18 @@ router.get("/policy/outdated", async (req, res) => {
 /**
  * GET /api/policy/lapsed
  * Get all policies with LAPSED status (premium not paid for 6+ months)
+ */
+/**
+ * @swagger
+ * /api/policy/lapsed:
+ *   get:
+ *     summary: List lapsed policies
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Lapsed policies retrieved }
+ *       401: { description: Unauthorized }
  */
 router.get("/policy/lapsed", async (req, res) => {
   try {
@@ -584,6 +677,18 @@ router.get("/policy/lapsed", async (req, res) => {
  * Get summary of policy statuses (ACTIVE, LAPSED, EXPIRED, PENDING)
  * NOTE: must be declared BEFORE "/policy/:policyId" or Express treats
  * "summary" as a policyId and this route becomes unreachable.
+ */
+/**
+ * @swagger
+ * /api/policy/summary:
+ *   get:
+ *     summary: Get aggregate policy summary (counts and totals)
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Policy summary retrieved }
+ *       401: { description: Unauthorized }
  */
 router.get("/policy/summary", async (req, res) => {
   try {
@@ -645,6 +750,21 @@ router.get("/policy/summary", async (req, res) => {
  * GET /api/policy/:policyId
  * Get policy details
  */
+/**
+ * @swagger
+ * /api/policy/{policyId}:
+ *   get:
+ *     summary: Get a single policy by ID
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: policyId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Policy details retrieved }
+ *       404: { description: Policy not found }
+ *       401: { description: Unauthorized }
+ */
 router.get("/policy/:policyId", async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -691,6 +811,44 @@ router.get("/policy/:policyId", async (req, res) => {
 /**
  * PUT /api/policy/:policyId
  * Update policy details
+ */
+/**
+ * @swagger
+ * /api/policy/{policyId}:
+ *   put:
+ *     summary: Update a policy
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: policyId, required: true, schema: { type: string } }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               plan_name: { type: string }
+ *               plan_no: { type: string }
+ *               policy_term: { type: string }
+ *               sum_assured: { type: number }
+ *               ab_pwb: { type: string }
+ *               doc: { type: string }
+ *               maturity_time: { type: string }
+ *               premium_amount: { type: number, minimum: 0 }
+ *               discount_scheme: { type: string }
+ *               premium_due_date: { type: string }
+ *               bank_account: { type: string }
+ *               branch: { type: string }
+ *               premium_paid: { type: number }
+ *               status: { type: string }
+ *               premium_status: { type: string }
+ *               payment_date: { type: string }
+ *     responses:
+ *       200: { description: Policy updated successfully }
+ *       400: { description: Validation failed }
+ *       403: { description: Unauthorized to update this policy }
+ *       404: { description: Policy not found }
  */
 router.put("/policy/:policyId", async (req, res) => {
   try {
@@ -805,6 +963,14 @@ router.put("/policy/:policyId", async (req, res) => {
       data: updateData,
     });
 
+    logger.info("[Policy] Updated", {
+      action: "UPDATE",
+      policyId,
+      updatedFields: Object.keys(updateData),
+      agentId,
+      timestamp: new Date().toISOString(),
+    });
+
     // Filter out null values
     const responseData = Object.fromEntries(
       Object.entries(updated).filter(([_, value]) => value !== null && value !== undefined && value !== "")
@@ -814,6 +980,7 @@ router.put("/policy/:policyId", async (req, res) => {
       ApiResponse.success("Policy updated successfully", responseData)
     );
   } catch (error) {
+    logger.error("[Policy] Update failed", error, { policyId });
     res.status(500).json(
       ApiResponse.error("Failed to update policy", null, 500)
     );
@@ -823,6 +990,21 @@ router.put("/policy/:policyId", async (req, res) => {
 /**
  * DELETE /api/policy/:policyId
  * Delete policy (soft delete)
+ */
+/**
+ * @swagger
+ * /api/policy/{policyId}:
+ *   delete:
+ *     summary: Delete a policy
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: policyId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Policy deleted successfully }
+ *       403: { description: Unauthorized to delete this policy }
+ *       404: { description: Policy not found }
  */
 router.delete("/policy/:policyId", async (req, res) => {
   try {
@@ -859,6 +1041,14 @@ router.delete("/policy/:policyId", async (req, res) => {
       },
     });
 
+    logger.info("[Policy] Deleted (soft)", {
+      action: "DELETE",
+      policyId,
+      agentId,
+      deletedAt: deleted.deleted_at,
+      timestamp: new Date().toISOString(),
+    });
+
     res.status(200).json(
       ApiResponse.success("Policy deleted successfully", {
         id: deleted.id,
@@ -866,6 +1056,7 @@ router.delete("/policy/:policyId", async (req, res) => {
       })
     );
   } catch (error) {
+    logger.error("[Policy] Delete failed", error, { policyId });
     res.status(500).json(
       ApiResponse.error("Failed to delete policy", null, 500)
     );
@@ -876,6 +1067,18 @@ router.delete("/policy/:policyId", async (req, res) => {
  * POST /api/policy/sync-lapsed
  * Automatically update policy status to LAPSED for all policies with premium due 6+ months ago
  * Only for admin or for agent's own policies
+ */
+/**
+ * @swagger
+ * /api/policy/sync-lapsed:
+ *   post:
+ *     summary: Recalculate and synchronize lapsed status across policies
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Lapsed statuses synchronized }
+ *       401: { description: Unauthorized }
  */
 router.post("/policy/sync-lapsed", async (req, res) => {
   try {
@@ -923,6 +1126,14 @@ router.post("/policy/sync-lapsed", async (req, res) => {
       updatedCount = policiestoUpdate.length;
     }
 
+    logger.info("[Policy] Sync-lapsed completed", {
+      action: "SYNC_LAPSED",
+      updatedCount,
+      agentId,
+      isAdmin,
+      timestamp: new Date().toISOString(),
+    });
+
     res.status(200).json(
       ApiResponse.success(
         `Synced lapsed policies. Updated ${updatedCount} policies to LAPSED status`,
@@ -933,6 +1144,7 @@ router.post("/policy/sync-lapsed", async (req, res) => {
       )
     );
   } catch (error) {
+    logger.error("[Policy] Sync-lapsed failed", error);
     res.status(500).json(
       ApiResponse.error("Failed to sync lapsed policies", null, 500)
     );
@@ -945,6 +1157,18 @@ router.post("/policy/sync-lapsed", async (req, res) => {
  * was deleted or is missing). Keeps policy data consistent with clients so
  * orphaned policies don't linger in counts, dues or the dashboard graph.
  * Admins clean up all agents; a regular agent cleans up only their own.
+ */
+/**
+ * @swagger
+ * /api/policy/cleanup-orphans:
+ *   post:
+ *     summary: Remove orphaned policy records with no matching client
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Orphaned policies cleaned up }
+ *       401: { description: Unauthorized }
  */
 router.post("/policy/cleanup-orphans", async (req, res) => {
   try {
@@ -1006,6 +1230,21 @@ router.post("/policy/cleanup-orphans", async (req, res) => {
  * fewer month overdue until it is fully caught up, at which point it is
  * marked PAID (and reactivated if it had lapsed).
  */
+/**
+ * @swagger
+ * /api/policy/{policyId}/pay-installment:
+ *   put:
+ *     summary: Record one premium installment as paid (advances due date by one month)
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: policyId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Installment recorded as paid }
+ *       403: { description: Unauthorized to update this policy }
+ *       404: { description: Policy not found }
+ */
 router.put("/policy/:policyId/pay-installment", async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -1059,6 +1298,16 @@ router.put("/policy/:policyId/pay-installment", async (req, res) => {
       ? businessDate.monthsOverdue(updated.premium_due_date, today)
       : 0;
 
+    logger.info("[Policy] Installment paid", {
+      action: "PAY_INSTALLMENT",
+      policyId,
+      agentId,
+      newDueDate: updated.premium_due_date,
+      premiumStatus: updated.premium_status,
+      fullyPaid: updated.premium_status === "PAID",
+      timestamp: new Date().toISOString(),
+    });
+
     res.status(200).json(
       ApiResponse.success("One premium installment recorded as paid", {
         id: updated.id,
@@ -1071,6 +1320,7 @@ router.put("/policy/:policyId/pay-installment", async (req, res) => {
       })
     );
   } catch (error) {
+    logger.error("[Policy] Pay-installment failed", error, { policyId });
     res.status(500).json(ApiResponse.error("Failed to record premium payment", null, 500));
   }
 });
@@ -1078,6 +1328,21 @@ router.put("/policy/:policyId/pay-installment", async (req, res) => {
 /**
  * PUT /api/policy/:policyId/mark-lapsed
  * Manually mark a specific policy as LAPSED
+ */
+/**
+ * @swagger
+ * /api/policy/{policyId}/mark-lapsed:
+ *   put:
+ *     summary: Mark a policy as lapsed
+ *     tags: [Policy]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: policyId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Policy marked as lapsed }
+ *       403: { description: Unauthorized to update this policy }
+ *       404: { description: Policy not found }
  */
 router.put("/policy/:policyId/mark-lapsed", async (req, res) => {
   try {
@@ -1114,6 +1379,13 @@ router.put("/policy/:policyId/mark-lapsed", async (req, res) => {
       include: { client: true },
     });
 
+    logger.info("[Policy] Marked as LAPSED", {
+      action: "LAPSE",
+      policyId,
+      agentId,
+      timestamp: new Date().toISOString(),
+    });
+
     res.status(200).json(
       ApiResponse.success(
         "Policy marked as LAPSED successfully",
@@ -1121,6 +1393,7 @@ router.put("/policy/:policyId/mark-lapsed", async (req, res) => {
       )
     );
   } catch (error) {
+    logger.error("[Policy] Mark-lapsed failed", error, { policyId });
     res.status(500).json(
       ApiResponse.error("Failed to mark policy as lapsed", null, 500)
     );

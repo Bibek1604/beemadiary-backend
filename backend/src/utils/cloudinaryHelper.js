@@ -19,73 +19,71 @@ cloudinary.config({
  * @returns {Promise<{public_id, secure_url, url, ...}>}
  */
 exports.uploadToCloudinary = async (fileBuffer, folder = 'agent-profiles', publicId = null) => {
+  if (!fileBuffer || fileBuffer.length === 0) {
+    throw new Error('File buffer is empty');
+  }
+
+  // 1) ALWAYS write a local backup first — this is the fallback copy that keeps
+  //    images working when Cloudinary is unreachable or not configured.
+  const backupDir = path.join(process.cwd(), 'uploads', folder);
+  if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+  let processedBuffer = fileBuffer;
   try {
-    // Validate input
-    if (!fileBuffer || fileBuffer.length === 0) {
-      throw new Error('File buffer is empty');
-    }
+    processedBuffer = await sharp(fileBuffer).webp({ quality: 80 }).toBuffer();
+  } catch (procErr) {
+    console.warn('Sharp processing failed, using original buffer:', procErr.message);
+    processedBuffer = fileBuffer;
+  }
 
-    // Verify Cloudinary is configured
-    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY) {
-      throw new Error('Cloudinary credentials not configured');
-    }
+  const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}.webp`;
+  const localPath = path.join(backupDir, uniqueName);
+  fs.writeFileSync(localPath, processedBuffer);
 
-    // Create local backup directory
-    const uploadsRoot = path.join(process.cwd(), 'uploads');
-    const backupDir = path.join(uploadsRoot, folder);
-    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+  // Build absolute URLs when a public backend base is configured (needed for
+  // cross-origin frontends); fall back to relative for same-origin deployments.
+  const apiBase = String(process.env.PUBLIC_API_URL || process.env.IMAGE_BASE_URL || '').replace(/\/+$/, '');
+  const localUrl = `${apiBase}/api/uploads/${folder}/${uniqueName}`;
 
-    // Convert to WEBP optimized buffer
-    let processedBuffer = fileBuffer;
-    try {
-      processedBuffer = await sharp(fileBuffer).webp({ quality: 80 }).toBuffer();
-    } catch (procErr) {
-      console.warn('Sharp processing failed, using original buffer:', procErr.message);
-      // fallback to original buffer
-      processedBuffer = fileBuffer;
-    }
+  // Local-only result, used when Cloudinary is unconfigured or fails. secure_url
+  // points at the locally-served file so callers that store secure_url still get
+  // a working URL.
+  const localResult = () => ({
+    secure_url: localUrl, url: localUrl, public_id: null,
+    localPath, local_url: localUrl, resilient_url: localUrl, source: 'local',
+  });
 
-    // Save local backup with simple filename (folder path already included in backupDir)
-    const timestamp = Date.now();
-    const randomId = crypto.randomBytes(8).toString('hex');
-    const uniqueName = `${timestamp}-${randomId}.webp`;
-    const localPath = path.join(backupDir, uniqueName);
-    fs.writeFileSync(localPath, processedBuffer);
+  // 2) Try Cloudinary (primary). On ANY failure, fall back to the local copy.
+  const cloudConfigured = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY);
+  if (!cloudConfigured) return localResult();
 
-    // Upload to Cloudinary with timeout
-    return await new Promise((resolve, reject) => {
+  try {
+    const result = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
-          folder: folder,
+          folder,
           resource_type: 'auto',
           public_id: publicId,
           overwrite: publicId ? true : false,
           quality: 'auto',
           fetch_format: 'auto',
-          timeout: 60000, // 60 second timeout
+          timeout: 60000,
         },
-        (error, result) => {
-          if (error) {
-            console.error('Cloudinary upload error:', error);
-            reject(new Error(`Cloudinary upload failed: ${error.message}`));
-          } else {
-            // attach localPath for callers if needed
-            result.localPath = localPath;
-            resolve(result);
-          }
-        }
+        (error, res) => (error ? reject(new Error(`Cloudinary upload failed: ${error.message}`)) : resolve(res))
       );
-
-      uploadStream.on('error', (error) => {
-        console.error('Upload stream error:', error);
-        reject(new Error(`Upload stream error: ${error.message}`));
-      });
-
+      uploadStream.on('error', (error) => reject(new Error(`Upload stream error: ${error.message}`)));
       uploadStream.end(processedBuffer);
     });
+
+    result.localPath = localPath;
+    result.local_url = localUrl;
+    // Cloudinary-first, local-fallback proxy URL (served by GET /api/images/:folder/:filename).
+    result.resilient_url = `${apiBase}/api/images/${folder}/${uniqueName}?pub=${encodeURIComponent(result.public_id)}`;
+    result.source = 'cloudinary';
+    return result;
   } catch (err) {
-    console.error('uploadToCloudinary error:', err.message);
-    return Promise.reject(err);
+    console.error('Cloudinary upload failed; using local backup instead:', err.message);
+    return localResult();
   }
 };
 

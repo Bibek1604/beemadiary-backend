@@ -1,7 +1,17 @@
 const express = require("express");
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const logger = require('../utils/logger');
 const { prisma } = require("../config/db");
 const businessDate = require("../utils/businessDate");
 
@@ -426,12 +436,38 @@ async function handleDashboardRequest(req, res) {
     const dashboard = await buildDashboard(agentId, req.query || {});
     return res.status(200).json(ApiResponse.success("Dashboard data retrieved successfully", dashboard));
   } catch (error) {
-    console.error("[Consolidated Dashboard Error]:", error);
+    logger.error("[Consolidated Dashboard Error]:", error);
     return res.status(500).json(ApiResponse.error("Failed to fetch dashboard data", null, 500));
   }
 }
 
+/**
+ * @swagger
+ * /api/dashboard:
+ *   get:
+ *     summary: Get consolidated dashboard data for the authenticated agent
+ *     tags: [Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Dashboard data retrieved successfully }
+ *       401: { description: Unauthorized }
+ */
 router.get("/dashboard", handleDashboardRequest);
+/**
+ * @swagger
+ * /api/dashboard/{agentId}:
+ *   get:
+ *     summary: Get consolidated dashboard data for a specific agent
+ *     tags: [Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: agentId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Dashboard data retrieved successfully }
+ *       401: { description: Unauthorized }
+ */
 router.get("/dashboard/:agentId", handleDashboardRequest);
 
 module.exports = router;

@@ -13,7 +13,7 @@ const ApiResponse = require("../utils/apiResponse");
 // ---------------------------------------------------------------------------
 const AUTH_BYPASS =
   String(process.env.AUTH_BYPASS).toLowerCase() === "true" &&
-  String(process.env.NODE_ENV).toLowerCase() !== "production";
+  String(process.env.NODE_ENV).toLowerCase() === "development"; // fail closed: bypass only in explicit development
 
 if (AUTH_BYPASS) {
   // eslint-disable-next-line no-console

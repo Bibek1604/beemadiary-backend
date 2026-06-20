@@ -1,101 +1,17 @@
-import { Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { AuthenticatedRequest, JWTPayload } from '../types';
-import { ResponseHandler } from '../utils/errorResponse';
+import { JWTPayload } from '../types';
 import { CONSTANTS } from '../config/constants';
 
-function extractAndVerify(
-  req: AuthenticatedRequest,
-  res: Response,
-  secret: string,
-  allowedTypes?: string[]
-): JWTPayload | null {
-  const authHeader = req.headers.authorization;
+// Session-aware verification lives in the canonical JS middleware
+// (src/middlewares/auth.middleware.js). Delegating to it here ensures logout,
+// logout-all and account deactivation are enforced consistently on EVERY route —
+// including those that import verifyToken / verifyAdminToken / verifyAnyToken,
+// which previously only ran jwt.verify and ignored the session table.
+const authMiddleware = require('../middlewares/auth.middleware');
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
-      ResponseHandler.unauthorized('No token provided')
-    );
-    return null;
-  }
-
-  const token = authHeader.substring(7);
-
-  try {
-    const decoded = jwt.verify(token, secret) as JWTPayload;
-
-    if (allowedTypes && allowedTypes.length > 0) {
-      const tokenType = (decoded as any).type || (decoded as any).role;
-      if (!allowedTypes.includes(tokenType)) {
-        res.status(CONSTANTS.STATUS_CODES.FORBIDDEN).json(
-          ResponseHandler.forbidden('This token is not authorised for this endpoint')
-        );
-        return null;
-      }
-    }
-
-    return decoded;
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
-        ResponseHandler.unauthorized('Token has expired')
-      );
-    } else {
-      res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
-        ResponseHandler.unauthorized('Invalid token')
-      );
-    }
-    return null;
-  }
-}
-
-export const verifyToken = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-  const decoded = extractAndVerify(req, res, CONSTANTS.JWT_SECRET, ['AGENT']);
-  if (!decoded) return;
-  req.user = decoded;
-  next();
-};
-
-export const verifyAdminToken = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-  const decoded = extractAndVerify(req, res, CONSTANTS.JWT_ADMIN_SECRET, ['ADMIN', 'SUPER_ADMIN']);
-  if (!decoded) return;
-  req.user = decoded;
-  next();
-};
-
-export const verifyAnyToken = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
-      ResponseHandler.unauthorized('No token provided')
-    );
-    return;
-  }
-
-  const token = authHeader.substring(7);
-
-  try {
-    const decoded = jwt.verify(token, CONSTANTS.JWT_ADMIN_SECRET) as JWTPayload;
-    req.user = decoded;
-    return next();
-  } catch { /* not an admin token */ }
-
-  try {
-    const decoded = jwt.verify(token, CONSTANTS.JWT_SECRET) as JWTPayload;
-    req.user = decoded;
-    return next();
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
-        ResponseHandler.unauthorized('Token has expired')
-      );
-    } else {
-      res.status(CONSTANTS.STATUS_CODES.UNAUTHORIZED).json(
-        ResponseHandler.unauthorized('Invalid token')
-      );
-    }
-  }
-};
+export const verifyToken = authMiddleware.authenticate;
+export const verifyAdminToken = authMiddleware.authenticateAdmin;
+export const verifyAnyToken = authMiddleware.authenticateAny;
 
 export const generateToken = (payload: JWTPayload): string => {
   return jwt.sign(payload, CONSTANTS.JWT_SECRET, {

@@ -582,6 +582,22 @@ class MongoDelegate {
     }
     return result;
   }
+
+  /**
+   * Native MongoDB aggregation pipeline passthrough. Use this for grouping,
+   * date-bucketing and other aggregations the Prisma-style helpers above cannot
+   * express. The pipeline runs server-side in MongoDB; returns the raw result rows.
+   * Example: collection-level $group by month over a filtered range.
+   *
+   * SECURITY: the `pipeline` is executed verbatim. NEVER build any stage from
+   * unsanitized user input (req.body/query/params) — doing so allows aggregation
+   * injection. Construct pipelines from server-side/validated values only
+   * (e.g. ids from the authenticated token, computed date ranges).
+   */
+  async aggregateRaw(pipeline: any[]) {
+    const collection = await this.collection();
+    return collection.aggregate(pipeline).toArray();
+  }
 }
 
 const delegateCache = new Map<string, MongoDelegate>();

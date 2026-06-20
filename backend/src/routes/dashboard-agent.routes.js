@@ -1,7 +1,17 @@
 const express = require("express");
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const logger = require('../utils/logger');
 const { prisma } = require("../config/db");
 
 // All dashboard endpoints require authentication
@@ -176,7 +186,7 @@ router.get("/dashboard-overview/", async (req, res) => {
       })
     );
   } catch (error) {
-    console.error("[Dashboard Overview Error]:", error);
+    logger.error("[Dashboard Overview Error]:", error);
     return res.status(500).json(
       ApiResponse.error("Failed to fetch dashboard overview", null, 500)
     );

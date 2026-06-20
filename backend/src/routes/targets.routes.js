@@ -15,9 +15,19 @@ const express = require('express');
 const crypto = require('crypto');
 const { prisma } = require('../config/db');
 const ApiResponse = require('../utils/apiResponse');
+const logger = require('../utils/logger');
 const { verifyToken } = require('../middleware/auth');
 
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 
 const TARGET_TYPES = ['MONTHLY', 'YEARLY'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -108,6 +118,18 @@ const decorateTarget = async (target) => {
 };
 
 // ---------- LIST ----------
+/**
+ * @swagger
+ * /api/my-targets:
+ *   get:
+ *     summary: List the authenticated agent's targets
+ *     tags: [Targets]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Targets fetched successfully }
+ *       401: { description: Unauthorized }
+ */
 router.get(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -123,12 +145,36 @@ router.get(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
       ApiResponse.success('Targets fetched successfully', { results: formatted, data: formatted }, 200)
     );
   } catch (error) {
-    console.error('[Targets List Error]:', error);
-    return res.status(500).json(ApiResponse.error('Failed to fetch targets', error, 500));
+    logger.error('[Targets List Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to fetch targets', null, 500));
   }
 });
 
 // ---------- CREATE ----------
+/**
+ * @swagger
+ * /api/my-targets:
+ *   post:
+ *     summary: Create a target
+ *     tags: [Targets]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [target_type, target_value]
+ *             properties:
+ *               target_type: { type: string, enum: [MONTHLY, YEARLY] }
+ *               target_value: { type: integer, minimum: 1 }
+ *               period_name: { type: string }
+ *     responses:
+ *       201: { description: Target created successfully }
+ *       400: { description: Validation failed }
+ *       401: { description: Unauthorized }
+ */
 router.post(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -167,12 +213,27 @@ router.post(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
     const decorated = await decorateTarget(created);
     return res.status(201).json(ApiResponse.success('Target created successfully', decorated, 201));
   } catch (error) {
-    console.error('[Targets Create Error]:', error);
-    return res.status(500).json(ApiResponse.error('Failed to create target', error, 500));
+    logger.error('[Targets Create Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to create target', null, 500));
   }
 });
 
 // ---------- GET ----------
+/**
+ * @swagger
+ * /api/my-targets/{targetId}:
+ *   get:
+ *     summary: Get a single target
+ *     tags: [Targets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: targetId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Target fetched successfully }
+ *       404: { description: Target not found }
+ *       401: { description: Unauthorized }
+ */
 router.get(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -187,12 +248,36 @@ router.get(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, asy
     const decorated = await decorateTarget(target);
     return res.status(200).json(ApiResponse.success('Target fetched successfully', decorated, 200));
   } catch (error) {
-    console.error('[Targets Get Error]:', error);
-    return res.status(500).json(ApiResponse.error('Failed to fetch target', error, 500));
+    logger.error('[Targets Get Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to fetch target', null, 500));
   }
 });
 
 // ---------- UPDATE ----------
+/**
+ * @swagger
+ * /api/my-targets/{targetId}:
+ *   patch:
+ *     summary: Update a target
+ *     tags: [Targets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: targetId, required: true, schema: { type: string } }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               target_type: { type: string, enum: [MONTHLY, YEARLY] }
+ *               target_value: { type: integer }
+ *               period_name: { type: string }
+ *     responses:
+ *       200: { description: Target updated successfully }
+ *       404: { description: Target not found }
+ *       401: { description: Unauthorized }
+ */
 router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -237,12 +322,27 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
     const decorated = await decorateTarget(updated);
     return res.status(200).json(ApiResponse.success('Target updated successfully', decorated, 200));
   } catch (error) {
-    console.error('[Targets Update Error]:', error);
-    return res.status(500).json(ApiResponse.error('Failed to update target', error, 500));
+    logger.error('[Targets Update Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to update target', null, 500));
   }
 });
 
 // ---------- DELETE ----------
+/**
+ * @swagger
+ * /api/my-targets/{targetId}:
+ *   delete:
+ *     summary: Delete a target
+ *     tags: [Targets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: path, name: targetId, required: true, schema: { type: string } }
+ *     responses:
+ *       200: { description: Target deleted successfully }
+ *       404: { description: Target not found }
+ *       401: { description: Unauthorized }
+ */
 router.delete(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, async (req, res) => {
   try {
     const agentId = req.user?.id;
@@ -261,8 +361,8 @@ router.delete(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, 
 
     return res.status(200).json(ApiResponse.success('Target deleted successfully', { id: current.id }, 200));
   } catch (error) {
-    console.error('[Targets Delete Error]:', error);
-    return res.status(500).json(ApiResponse.error('Failed to delete target', error, 500));
+    logger.error('[Targets Delete Error]:', error);
+    return res.status(500).json(ApiResponse.error('Failed to delete target', null, 500));
   }
 });
 

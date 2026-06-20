@@ -1,7 +1,17 @@
 const express = require("express");
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const logger = require('../utils/logger');
 const multer = require("multer");
 const { prisma } = require("../config/db");
 const { uploadToCloudinary } = require("../utils/cloudinaryHelper");
@@ -92,12 +102,12 @@ router.post(
             `${client_id}-profile`
           );
           uploads.profile_picture = {
-            url: result.secure_url,
+            url: result.resilient_url,
             public_id: result.public_id,
             filename: files.profile_picture[0].originalname,
           };
         } catch (error) {
-          console.error("Profile picture upload failed:", error.message);
+          logger.error("Profile picture upload failed:", error);
         }
       }
 
@@ -112,12 +122,12 @@ router.post(
               `${client_id}-doc-${i + 1}`
             );
             uploads.supporting_documents.push({
-              url: result.secure_url,
+              url: result.resilient_url,
               public_id: result.public_id,
               filename: files.supporting_documents[i].originalname,
             });
           } catch (error) {
-            console.error(`Document ${i + 1} upload failed:`, error.message);
+            logger.error(`Document ${i + 1} upload failed:`, error);
           }
         }
       }
@@ -133,12 +143,12 @@ router.post(
               `${client_id}-photo-${i + 1}`
             );
             uploads.photos.push({
-              url: result.secure_url,
+              url: result.resilient_url,
               public_id: result.public_id,
               filename: files.photos[i].originalname,
             });
           } catch (error) {
-            console.error(`Photo ${i + 1} upload failed:`, error.message);
+            logger.error(`Photo ${i + 1} upload failed:`, error);
           }
         }
       }
@@ -173,7 +183,7 @@ router.post(
         })
       );
     } catch (error) {
-      console.error("[Upload Documents Error]:", error);
+      logger.error("[Upload Documents Error]:", error);
       res.status(500).json(ApiResponse.error("Failed to upload documents", null, 500));
     }
   }

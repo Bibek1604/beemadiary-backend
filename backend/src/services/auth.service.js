@@ -7,6 +7,8 @@ const adminRepository = require("../repositories/admin.repository");
 const sessionRepository = require("../repositories/session.repository");
 const auditLogRepository = require("../repositories/audit.repository");
 const { prisma } = require("../config/db");
+const logger = require("../utils/logger");
+const { AccountLockoutManager } = require("../utils/accountLockout");
 
 function parseDurationMs(str, fallbackMs = 15 * 60 * 1000) {
   if (!str) return fallbackMs;
@@ -39,8 +41,13 @@ class AuthService {
     const admin = await adminRepository.findOne({ email });
     if (!admin) { const err = new Error("Invalid credentials"); err.statusCode = 401; throw err; }
 
+    if (await AccountLockoutManager.isLocked(admin.id)) {
+      const err = new Error("Too many failed login attempts. Please try again later."); err.statusCode = 429; throw err;
+    }
+
     const valid = await bcrypt.compare(password, admin.password_hash);
-    if (!valid) { const err = new Error("Invalid credentials"); err.statusCode = 401; throw err; }
+    if (!valid) { await AccountLockoutManager.recordFailedAttempt(admin.id); const err = new Error("Invalid credentials"); err.statusCode = 401; throw err; }
+    await AccountLockoutManager.resetAttempts(admin.id);
 
     if (admin.status !== "ACTIVE") { const err = new Error("Your account has been deactivated"); err.statusCode = 403; throw err; }
 
@@ -53,12 +60,12 @@ class AuthService {
       ip_address: ipAddress || null, user_agent: userAgent || null,
     });
 
-    prisma.refreshToken.create({ data: {
+    await prisma.refreshToken.create({ data: {
       id: uuidv4(), user_id: admin.id, user_type: "ADMIN",
       token_hash: hashToken(refreshToken), family_id: uuidv4(),
       expires_at: new Date(Date.now() + parseDurationMs(refreshExpiry)),
       revoked_at: null, ip_address: ipAddress || null, user_agent: userAgent || null, created_at: new Date(),
-    }}).catch(() => {});
+    }}).catch((e) => logger.error("[auth] admin refresh-token persist failed", e));
 
     auditLogRepository.create({ user_id: admin.id, user_type: "ADMIN", action: "ADMIN_LOGIN", details: { email: admin.email }, ip_address: ipAddress || null }).catch(() => {});
 
@@ -70,10 +77,16 @@ class AuthService {
     const agent = await agentRepository.findOne({ email });
     if (!agent) { const err = new Error("Invalid email or password"); err.statusCode = 401; throw err; }
 
-    if (agent.status !== "ACTIVE") { const err = new Error("Account is inactive. Please contact your admin."); err.statusCode = 403; throw err; }
+    if (await AccountLockoutManager.isLocked(agent.id)) {
+      const err = new Error("Too many failed login attempts. Please try again later."); err.statusCode = 429; throw err;
+    }
 
+    // Password check BEFORE status check — prevents user enumeration via inactive account detection
     const valid = await bcrypt.compare(password, agent.password_hash);
-    if (!valid) { const err = new Error("Invalid email or password"); err.statusCode = 401; throw err; }
+    if (!valid) { await AccountLockoutManager.recordFailedAttempt(agent.id); const err = new Error("Invalid email or password"); err.statusCode = 401; throw err; }
+    await AccountLockoutManager.resetAttempts(agent.id);
+
+    if (agent.status !== "ACTIVE") { const err = new Error("Account is inactive. Please contact your admin."); err.statusCode = 403; throw err; }
 
     const payload = { id: agent.id, email: agent.email, role: "AGENT", type: "AGENT", company_id: agent.company_id };
     const { accessToken, refreshToken, accessExpiry, refreshExpiry } = generateTokenPair(payload, "AGENT");
@@ -84,12 +97,12 @@ class AuthService {
       ip_address: ipAddress || null, user_agent: userAgent || null,
     });
 
-    prisma.refreshToken.create({ data: {
+    await prisma.refreshToken.create({ data: {
       id: uuidv4(), user_id: agent.id, user_type: "AGENT",
       token_hash: hashToken(refreshToken), family_id: uuidv4(),
       expires_at: new Date(Date.now() + parseDurationMs(refreshExpiry)),
       revoked_at: null, ip_address: ipAddress || null, user_agent: userAgent || null, created_at: new Date(),
-    }}).catch(() => {});
+    }}).catch((e) => logger.error("[auth] agent refresh-token persist failed", e));
 
     auditLogRepository.create({ user_id: agent.id, user_type: "AGENT", action: "AGENT_LOGIN", details: { email: agent.email }, ip_address: ipAddress || null }).catch(() => {});
 
@@ -154,9 +167,9 @@ class AuthService {
     const payload = { id: decoded.id, email: decoded.email || "", role: decoded.role, type: decoded.type || userType, company_id: decoded.company_id };
     const { accessToken, refreshToken: newRefreshToken, accessExpiry, refreshExpiry } = generateTokenPair(payload, userType);
 
-    sessionRepository.create({ user_id: decoded.id, user_type: userType, token: accessToken, expires_at: new Date(Date.now() + parseDurationMs(accessExpiry)), ip_address: ipAddress || null, user_agent: userAgent || null }).catch(() => {});
+    await sessionRepository.create({ user_id: decoded.id, user_type: userType, token: accessToken, expires_at: new Date(Date.now() + parseDurationMs(accessExpiry)), ip_address: ipAddress || null, user_agent: userAgent || null }).catch((e) => logger.error("[auth] refresh session persist failed", e));
 
-    prisma.refreshToken.create({ data: { id: uuidv4(), user_id: decoded.id, user_type: userType, token_hash: hashToken(newRefreshToken), family_id: stored.family_id, expires_at: new Date(Date.now() + parseDurationMs(refreshExpiry)), revoked_at: null, ip_address: ipAddress || null, user_agent: userAgent || null, created_at: new Date() } }).catch(() => {});
+    await prisma.refreshToken.create({ data: { id: uuidv4(), user_id: decoded.id, user_type: userType, token_hash: hashToken(newRefreshToken), family_id: stored.family_id, expires_at: new Date(Date.now() + parseDurationMs(refreshExpiry)), revoked_at: null, ip_address: ipAddress || null, user_agent: userAgent || null, created_at: new Date() } }).catch((e) => logger.error("[auth] refresh-token rotate persist failed", e));
 
     return { accessToken, refreshToken: newRefreshToken };
   }
@@ -220,10 +233,20 @@ class AuthService {
     return this.adminLogin(email, password, ipAddress, userAgent);
   }
 
-  async logout(userId, accessToken) {
+  async logout(accessToken, rawRefreshToken) {
     // Delete the session so the access token is rejected immediately
-    // (auth middleware validates tokens by looking up the session row).
-    await prisma.session.deleteMany({ where: { user_id: userId, token: accessToken } }).catch(() => {});
+    // (the auth middleware validates tokens by looking up the session row).
+    if (accessToken) {
+      await prisma.session.deleteMany({ where: { token: accessToken } }).catch(() => {});
+    }
+    // Revoke the device's refresh token (and its rotation family) so it cannot
+    // be used to mint new access tokens after logout.
+    if (rawRefreshToken) {
+      const stored = await prisma.refreshToken.findFirst({ where: { token_hash: hashToken(rawRefreshToken) } }).catch(() => null);
+      if (stored) {
+        await prisma.refreshToken.updateMany({ where: { family_id: stored.family_id }, data: { revoked_at: new Date() } }).catch(() => {});
+      }
+    }
     return { message: "Successfully logged out" };
   }
 }

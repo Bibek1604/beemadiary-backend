@@ -7,8 +7,16 @@ import { asyncHandler } from '../middleware/asyncHandler';
 const router = Router();
 
 /**
- * GET /api/user-panel/dashboard-overview
- * Fetch dashboard overview for authenticated user (Agent/Admin)
+ * @swagger
+ * /api/user-panel/dashboard-overview:
+ *   get:
+ *     summary: Dashboard overview for the authenticated user (Agent/Admin)
+ *     tags: [Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Dashboard overview retrieved successfully }
+ *       401: { description: Unauthorized }
  */
 router.get(
   '/dashboard-overview',

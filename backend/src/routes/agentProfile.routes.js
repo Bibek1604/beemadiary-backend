@@ -1,15 +1,22 @@
 const express = require("express");
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const { boundaryGuard } = require("../middleware/boundaryGuard");
 const multer = require("multer");
 const { uploadToCloudinary, deleteFromCloudinary } = require("../utils/cloudinaryHelper");
 const { prisma } = require("../config/db");
-const console = {
-  log() {},
-  error() {},
-  warn() {},
-};
+const auditLogRepository = require("../repositories/audit.repository");
+const logger = require("../utils/logger");
 
 // Configure Multer for image upload
 const storage = multer.memoryStorage();
@@ -46,6 +53,18 @@ router.use(authMiddleware);
  *         description: Agent profile retrieved successfully
  */
 // Aliases: /api/me and /api/agent/me (used by the agent frontend auth flow)
+/**
+ * @swagger
+ * /api/me:
+ *   get:
+ *     summary: Get current agent profile (alias of /api/agent/profile)
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Agent profile retrieved }
+ *       401: { description: Unauthorized }
+ */
 router.get(["/agent/profile", "/agent/me", "/me"], async (req, res) => {
   try {
     const userId = req.user?.id;
@@ -111,14 +130,51 @@ router.get(["/agent/profile", "/agent/me", "/me"], async (req, res) => {
  * /api/agent/profile:
  *   post:
  *     summary: Create or update agent profile
+ *     description: |
+ *       Upsert the authenticated agent's profile. Accepts multipart/form-data for optional
+ *       image upload. `full_name` is the only required field.
  *     tags: [Agent Profile]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [full_name]
+ *             properties:
+ *               full_name:         { type: string, example: "Jane Doe" }
+ *               email:             { type: string, format: email, example: "jane@example.com" }
+ *               phone_number:      { type: string, example: "+977-9800000000" }
+ *               license_number:    { type: string }
+ *               license_expiry:    { type: string, format: date }
+ *               branch:            { type: string }
+ *               designation:       { type: string }
+ *               qualification:     { type: string }
+ *               bio:               { type: string, maxLength: 500 }
+ *               specialization:    { type: string }
+ *               years_of_experience: { type: integer }
+ *               image:             { type: string, format: binary, description: "Profile photo (JPEG/PNG/WebP/GIF, max 5 MB)" }
  *     responses:
  *       200:
  *         description: Agent profile updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 message: { type: string, example: "Agent profile updated successfully" }
+ *                 data:    { type: object }
+ *       400:
+ *         description: Validation error
+ *       401:
+ *         description: Unauthorized
+ *       500:
+ *         description: Internal server error
  */
-router.post("/agent/profile", upload.single("image"), async (req, res) => {
+router.post("/agent/profile", upload.single("image"), boundaryGuard, async (req, res) => {
   try {
     const userId = req.user?.id;
     const {
@@ -146,6 +202,13 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
     }
 
     // Validate optional fields
+    if (email && email.trim()) {
+      const EMAIL_RE = /^[a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+      if (!EMAIL_RE.test(email.trim())) {
+        return res.status(400).json(ApiResponse.error("Invalid email address format", null, 400));
+      }
+    }
+
     if (phone_number && phone_number.trim()) {
       if (!isValidPhone(phone_number.trim())) {
         return res.status(400).json(ApiResponse.error("Invalid phone number format", null, 400));
@@ -189,10 +252,10 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
           `lic-insurance/agent-profiles/${userId}`,
           `agent-profile-${userId}`
         );
-        updateData.profile_picture = cloudinaryResult.secure_url;
+        updateData.profile_picture = cloudinaryResult.resilient_url;
         updateData.profile_picture_public_id = cloudinaryResult.public_id;
       } catch (cloudinaryError) {
-        console.error('Image upload error in profile update:', cloudinaryError.message);
+        logger.error('Image upload error in profile update:', cloudinaryError);
         return res.status(400).json(
           ApiResponse.error(
             `Image upload failed: ${cloudinaryError.message}`,
@@ -227,10 +290,22 @@ router.post("/agent/profile", upload.single("image"), async (req, res) => {
       Object.entries(savedProfile).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
 
+    // Audit log
+    auditLogRepository.create({
+      user_id: userId,
+      user_type: "AGENT",
+      action: "PROFILE_UPDATED",
+      details: {
+        fields_updated: Object.keys(updateData),
+        has_image: !!req.file,
+      },
+    }).catch((err) => logger.error("[Profile Audit Log Error]:", err));
+
     res.status(200).json(
       ApiResponse.success("Agent profile updated successfully", cleanedResponse)
     );
   } catch (error) {
+    logger.error("[POST /agent/profile Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to update agent profile", null, 500)
     );
@@ -298,11 +373,54 @@ router.put("/agent/profile/:id", async (req, res) => {
 });
 
 /**
- * PATCH /api/profile/update
- * Update the authenticated agent's own profile (JSON or multipart with `image`).
- * Mirrors POST /api/agent/profile but is partial — only provided fields change.
+ * @swagger
+ * /api/profile/update:
+ *   patch:
+ *     summary: Partially update own agent profile
+ *     description: |
+ *       Update any subset of profile fields. Only the fields present in the request are changed.
+ *       Accepts both JSON and multipart/form-data (include `image` for photo upload).
+ *     tags: [Agent Profile]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               full_name:         { type: string }
+ *               email:             { type: string, format: email }
+ *               phone_number:      { type: string }
+ *               lic_agent_code:    { type: string }
+ *               branch_division:   { type: string }
+ *               position_designation: { type: string }
+ *               qualification:     { type: string }
+ *               short_bio:         { type: string, maxLength: 500 }
+ *               specialization:    { type: string }
+ *               years_of_experience: { type: integer }
+ *               image:             { type: string, format: binary }
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               full_name:         { type: string }
+ *               email:             { type: string, format: email }
+ *               phone_number:      { type: string }
+ *               short_bio:         { type: string, maxLength: 500 }
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully
+ *       400:
+ *         description: Validation error or image upload failure
+ *       401:
+ *         description: Unauthorized
+ *       404:
+ *         description: Agent profile not found
+ *       500:
+ *         description: Internal server error
  */
-router.patch("/profile/update", upload.single("image"), async (req, res) => {
+router.patch("/profile/update", upload.single("image"), boundaryGuard, async (req, res) => {
   try {
     const userId = req.user?.id;
     if (!userId) {
@@ -324,7 +442,7 @@ router.patch("/profile/update", upload.single("image"), async (req, res) => {
           `lic-insurance/agent-profiles/${userId}`,
           `agent-profile-${userId}`
         );
-        updateData.profile_picture = cloudinaryResult.secure_url;
+        updateData.profile_picture = cloudinaryResult.resilient_url;
         updateData.profile_picture_public_id = cloudinaryResult.public_id;
       } catch (cloudinaryError) {
         return res.status(400).json(
@@ -343,10 +461,18 @@ router.patch("/profile/update", upload.single("image"), async (req, res) => {
       Object.entries(saved).filter(([_, value]) => value !== null && value !== undefined && value !== "")
     );
 
+    auditLogRepository.create({
+      user_id: userId,
+      user_type: "AGENT",
+      action: "PROFILE_UPDATED",
+      details: { fields_updated: Object.keys(updateData), has_image: !!req.file },
+    }).catch((err) => logger.error("[Profile Audit Log Error]:", err));
+
     res.status(200).json(
       ApiResponse.success("Agent profile updated successfully", cleaned)
     );
   } catch (error) {
+    logger.error("[PATCH /profile/update Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to update agent profile", null, 500)
     );
@@ -387,7 +513,8 @@ router.delete("/agent/profile/:id", async (req, res) => {
       );
     }
 
-    const profile = await prisma.agent.findUnique({ where: { id: userId } });
+    // Use `id` (the target) not `userId` (the requester) for all DB operations
+    const profile = await prisma.agent.findUnique({ where: { id } });
     if (!profile) {
       return res.status(404).json(ApiResponse.error("Profile not found", null, 404));
     }
@@ -399,7 +526,7 @@ router.delete("/agent/profile/:id", async (req, res) => {
 
     // If no PIN is set yet, allow deletion (first-time deactivation without PIN)
     await prisma.agent.update({
-      where: { id: userId },
+      where: { id },
       data: {
         deleted_at: new Date(),
         status: "INACTIVE",
@@ -408,10 +535,18 @@ router.delete("/agent/profile/:id", async (req, res) => {
       }
     });
 
+    auditLogRepository.create({
+      user_id: userId,
+      user_type: "AGENT",
+      action: "PROFILE_DEACTIVATED",
+      details: { target_id: id, requested_by: userId },
+    }).catch((err) => logger.error("[Profile Audit Log Error]:", err));
+
     res.status(200).json(
-      ApiResponse.success("Profile deleted / deactivated successfully", { id: userId })
+      ApiResponse.success("Profile deleted / deactivated successfully", { id })
     );
   } catch (error) {
+    logger.error("[DELETE /agent/profile/:id Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to delete agent profile", null, 500)
     );
@@ -434,7 +569,7 @@ router.delete("/agent/profile/:id", async (req, res) => {
  *       200:
  *         description: Image uploaded successfully
  */
-router.post("/agent/profile/upload-image", upload.single("image"), async (req, res) => {
+router.post("/agent/profile/upload-image", upload.single("image"), boundaryGuard, async (req, res) => {
   try {
     const userId = req.user?.id;
 
@@ -471,7 +606,7 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
         `agent-profile-${userId}`
       );
     } catch (cloudinaryError) {
-      console.error('Image upload error:', cloudinaryError.message);
+      logger.error('Image upload error:', cloudinaryError);
       return res.status(400).json(
         ApiResponse.error(
           `Image upload failed: ${cloudinaryError.message}`,
@@ -486,18 +621,25 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
       where: { id: userId },
       create: {
         id: userId,
-        profile_picture: cloudinaryResult.secure_url,
+        profile_picture: cloudinaryResult.resilient_url,
         profile_picture_public_id: cloudinaryResult.public_id,
       },
       update: {
-        profile_picture: cloudinaryResult.secure_url,
+        profile_picture: cloudinaryResult.resilient_url,
         profile_picture_public_id: cloudinaryResult.public_id,
       }
     });
 
+    auditLogRepository.create({
+      user_id: userId,
+      user_type: "AGENT",
+      action: "PROFILE_IMAGE_UPLOADED",
+      details: { file_type: req.file.mimetype, file_size: req.file.size },
+    }).catch((err) => logger.error("[Profile Audit Log Error]:", err));
+
     res.status(200).json(
       ApiResponse.success("Image uploaded successfully", {
-        image_url: cloudinaryResult.secure_url,
+        image_url: cloudinaryResult.resilient_url,
         public_id: cloudinaryResult.public_id,
         file_size: req.file.size,
         file_type: req.file.mimetype,
@@ -505,6 +647,7 @@ router.post("/agent/profile/upload-image", upload.single("image"), async (req, r
       })
     );
   } catch (error) {
+    logger.error("[POST /agent/profile/upload-image Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to upload image", null, 500)
     );
@@ -553,10 +696,18 @@ router.delete("/agent/profile/profile-image", async (req, res) => {
       }
     });
 
+    auditLogRepository.create({
+      user_id: userId,
+      user_type: "AGENT",
+      action: "PROFILE_IMAGE_REMOVED",
+      details: { removed_public_id: agent.profile_picture_public_id },
+    }).catch((err) => logger.error("[Profile Audit Log Error]:", err));
+
     res.status(200).json(
       ApiResponse.success("Image deleted successfully", null)
     );
   } catch (error) {
+    logger.error("[DELETE /agent/profile/profile-image Error]:", error);
     res.status(500).json(
       ApiResponse.error("Failed to delete image", null, 500)
     );

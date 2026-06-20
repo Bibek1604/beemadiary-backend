@@ -1,7 +1,17 @@
 const express = require("express");
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 const authMiddleware = require("../middlewares/auth.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const logger = require('../utils/logger');
 const { prisma } = require("../config/db");
 
 // All endpoints require authentication
@@ -67,6 +77,13 @@ router.post("/policy/bank-details", async (req, res) => {
       return res.status(404).json(ApiResponse.error("Policy not found", null, 404));
     }
 
+    // Ownership check: an agent may only modify bank details on their own policy.
+    const role = String(req.user?.role || req.user?.type || "").toUpperCase();
+    const isAdmin = role === "ADMIN" || role === "SUPER_ADMIN";
+    if (!isAdmin && policy.agent_id !== agentId) {
+      return res.status(403).json(ApiResponse.error("You do not have permission to modify this policy", null, 403));
+    }
+
     // Update policy with bank details
     const updatedPolicy = await prisma.policy.update({
       where: { id: policy_id },
@@ -88,7 +105,7 @@ router.post("/policy/bank-details", async (req, res) => {
       })
     );
   } catch (error) {
-    console.error("[Add Bank Details Error]:", error);
+    logger.error("[Add Bank Details Error]:", error);
     res.status(500).json(ApiResponse.error("Failed to add bank details", null, 500));
   }
 });

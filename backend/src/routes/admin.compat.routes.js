@@ -4,8 +4,19 @@ const { prisma } = require("../config/db");
 const { authenticateAdmin } = require("../middlewares/auth.middleware");
 const authorize = require("../middlewares/rbac.middleware");
 const ApiResponse = require("../utils/apiResponse");
+const logger = require('../utils/logger');
+const { maybePaginate } = require("../utils/pagination");
 
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 
 const toIso = (value) => (value ? new Date(value).toISOString() : null);
 const normalizeStatus = (value) => String(value || "ACTIVE").toUpperCase() === "INACTIVE" ? "INACTIVE" : "ACTIVE";
@@ -23,11 +34,6 @@ const agentSelect = {
   _count: { select: { clients: true } },
 };
 
-const console = {
-  log() {},
-  error() {},
-  warn() {},
-};
 
 const serializeAdmin = (admin) => ({
   id: admin.id,
@@ -113,8 +119,9 @@ router.get("/users", async (_req, res) => {
     const users = [...admins.map(serializeAdmin), ...agents.map(serializeAgent), ...clients.map(serializeClient)]
       .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
 
-    return res.status(200).json(ApiResponse.success("Users retrieved successfully", users));
+    return res.status(200).json(ApiResponse.success("Users retrieved successfully", maybePaginate(_req, users)));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Unable to fetch user list"));
   }
 });
@@ -133,6 +140,7 @@ router.get("/users/:id", async (req, res) => {
 
     return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Unable to fetch user details"));
   }
 });
@@ -202,6 +210,7 @@ router.post("/users", async (req, res) => {
         });
         return res.status(201).json(ApiResponse.success("Admin created successfully", serializeAdmin(admin)));
       } catch (err) {
+        logger.error('[admin.compat] request failed', err);
         if (err.code === 'P2002') {
           const field = err.meta?.target?.[0] || 'field';
           const fieldLabel = field === 'email' ? 'Email' : field === 'username' ? 'Username' : field === 'phone' ? 'Phone number' : field;
@@ -224,6 +233,7 @@ router.post("/users", async (req, res) => {
         });
         return res.status(201).json(ApiResponse.success("Client created successfully", serializeClient(client)));
       } catch (err) {
+        logger.error('[admin.compat] request failed', err);
         if (err.code === 'P2002') {
           const field = err.meta?.target?.[0] || 'field';
           const fieldLabel = field === 'email' ? 'Email' : field === 'phone' ? 'Phone number' : field;
@@ -247,6 +257,7 @@ router.post("/users", async (req, res) => {
       });
       return res.status(201).json(ApiResponse.success("Agent created successfully", serializeAgent({ ...agent, _count: { clients: 0 } })));
     } catch (err) {
+      logger.error('[admin.compat] request failed', err);
       if (err.code === 'P2002') {
         const field = err.meta?.target?.[0] || 'field';
         const fieldLabel = field === 'email' ? 'Email' : field === 'phone_number' ? 'Phone number' : field;
@@ -255,6 +266,7 @@ router.post("/users", async (req, res) => {
       throw err;
     }
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     // Intentionally avoid logging exception payloads here.
 
     if (error.code === 'P2025') {
@@ -281,6 +293,7 @@ router.patch("/users/:id", async (req, res) => {
         });
         return res.status(200).json(ApiResponse.success("User updated successfully", serializeAdmin(updated)));
       } catch (err) {
+        logger.error('[admin.compat] request failed', err);
         if (err.code === 'P2002') {
           const field = err.meta?.target?.[0] || 'field';
           const fieldLabel = field === 'email' ? 'Email' : field === 'username' ? 'Username' : field === 'phone' ? 'Phone number' : field;
@@ -306,6 +319,7 @@ router.patch("/users/:id", async (req, res) => {
         });
         return res.status(200).json(ApiResponse.success("User updated successfully", serializeAgent(updated)));
       } catch (err) {
+        logger.error('[admin.compat] request failed', err);
         if (err.code === 'P2002') {
           const field = err.meta?.target?.[0] || 'field';
           const fieldLabel = field === 'email' ? 'Email' : field === 'phone_number' ? 'Phone number' : field;
@@ -331,6 +345,7 @@ router.patch("/users/:id", async (req, res) => {
         });
         return res.status(200).json(ApiResponse.success("User updated successfully", serializeClient(updated)));
       } catch (err) {
+        logger.error('[admin.compat] request failed', err);
         if (err.code === 'P2002') {
           const field = err.meta?.target?.[0] || 'field';
           const fieldLabel = field === 'email' ? 'Email' : field === 'phone' ? 'Phone number' : field;
@@ -342,6 +357,7 @@ router.patch("/users/:id", async (req, res) => {
 
     return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     // Intentionally avoid logging exception payloads here.
 
     if (error.code === 'P2025') {
@@ -379,6 +395,7 @@ router.delete("/users/:id", async (req, res) => {
 
     return res.status(404).json(ApiResponse.error("User not found", "The user you are looking for does not exist or has been deleted."));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Could not delete user"));
   }
 });
@@ -386,8 +403,9 @@ router.delete("/users/:id", async (req, res) => {
 router.get("/companies", async (_req, res) => {
   try {
     const companies = await prisma.company.findMany({ where: { deleted_at: null }, orderBy: { created_at: "desc" } });
-    return res.status(200).json(ApiResponse.success("Companies retrieved successfully", companies.map(serializeCompany)));
+    return res.status(200).json(ApiResponse.success("Companies retrieved successfully", maybePaginate(_req, companies.map(serializeCompany))));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Unable to fetch companies"));
   }
 });
@@ -398,6 +416,7 @@ router.get("/companies/:id", async (req, res) => {
     if (!company || company.deleted_at) return res.status(404).json(ApiResponse.error("Company not found", "The company you are looking for does not exist or has been deleted."));
     return res.status(200).json(ApiResponse.success("Company retrieved successfully", serializeCompany(company)));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Unable to fetch company"));
   }
 });
@@ -413,6 +432,7 @@ router.delete("/companies/:id", async (req, res) => {
     await prisma.company.update({ where: { id: req.params.id }, data: { deleted_at: new Date(), status: "INACTIVE" } });
     return res.status(200).json(ApiResponse.success("Company deleted successfully", { id: req.params.id }));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Could not delete company"));
   }
 });
@@ -421,32 +441,46 @@ router.delete("/companies/:id", async (req, res) => {
 // GET /api/admin/dashboard-overview/
 // Summary stats for the admin dashboard
 // ---------------------------------------------------------------------------
+/**
+ * @swagger
+ * /api/admin/dashboard-overview:
+ *   get:
+ *     summary: Admin dashboard overview (counts and recent activity)
+ *     tags: [Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Dashboard overview fetched successfully }
+ *       401: { description: Unauthorized }
+ */
 router.get("/dashboard-overview", async (_req, res) => {
   try {
-    const [admins, agents, clients, companies, policies, transactions] = await Promise.all([
+    const [admins, activeAgents, allAgents, clients, companies, totalPolicies, lapsedPolicies] = await Promise.all([
       prisma.admin.count({ where: { deleted_at: null } }).catch(() => 0),
+      prisma.agent.count({ where: { deleted_at: null, status: "ACTIVE" } }).catch(() => 0),
       prisma.agent.count({ where: { deleted_at: null } }).catch(() => 0),
       prisma.client.count({ where: { deleted_at: null } }).catch(() => 0),
       prisma.company.count({ where: { deleted_at: null } }).catch(() => 0),
-      prisma.policy  ? prisma.policy.count({ where: { deleted_at: null } }).catch(() => 0)      : Promise.resolve(0),
-      prisma.transaction ? prisma.transaction.count({ where: { deleted_at: null } }).catch(() => 0) : Promise.resolve(0),
+      prisma.policy ? prisma.policy.count({ where: { deleted_at: null } }).catch(() => 0) : Promise.resolve(0),
+      prisma.policy ? prisma.policy.count({ where: { deleted_at: null, status: "LAPSED" } }).catch(() => 0) : Promise.resolve(0),
     ]);
 
-    const total_members = admins + agents + clients;
+    const total_members  = admins + allAgents + clients;
+    const active_members = admins + activeAgents + clients;
 
     return res.status(200).json(ApiResponse.success("Dashboard overview fetched successfully", {
       summary: {
         total_members,
-        active_members:   total_members,
-        inactive_members: 0,
-        lapsed_policies:  Math.max(policies - transactions, 0),
+        active_members,
+        inactive_members: total_members - active_members,
+        lapsed_policies:  lapsedPolicies,
         overdue_premiums: 0,
         unread_alerts:    0,
       },
       total_users:     clients,
-      total_agents:    agents,
+      total_agents:    allAgents,
       total_companies: companies,
-      total_policies:  policies,
+      total_policies:  totalPolicies,
       birthdays:              [],
       recent_alerts:          [],
       recent_notifications:   [],
@@ -460,6 +494,7 @@ router.get("/dashboard-overview", async (_req, res) => {
       },
     }));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Could not fetch dashboard overview"));
   }
 });
@@ -468,6 +503,21 @@ router.get("/dashboard-overview", async (_req, res) => {
 // GET /api/admin/audit-logs/
 // Recent admin action audit logs, newest first (max 100)
 // ---------------------------------------------------------------------------
+/**
+ * @swagger
+ * /api/admin/audit-logs:
+ *   get:
+ *     summary: List audit logs
+ *     tags: [Admin - Audit]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - { in: query, name: limit, schema: { type: integer, maximum: 100, default: 50 } }
+ *       - { in: query, name: offset, schema: { type: integer, default: 0 } }
+ *     responses:
+ *       200: { description: Audit logs fetched successfully }
+ *       401: { description: Unauthorized }
+ */
 router.get("/audit-logs", async (req, res) => {
   try {
     const limit  = Math.min(parseInt(req.query.limit  || "50",  10), 100);
@@ -492,6 +542,7 @@ router.get("/audit-logs", async (req, res) => {
       })),
     }));
   } catch (error) {
+    logger.error('[admin.compat] request failed', error);
     return res.status(500).json(ApiResponse.error("Could not fetch audit logs"));
   }
 });

@@ -22,9 +22,10 @@ const loginSchema = Joi.object({
   password: Joi.string()
     .trim()
     .custom(noWhitespaceOnly, "Whitespace Validation")
-    .min(1)
+    .min(6)
     .required()
     .messages({
+      "string.min": "Password must be at least 6 characters",
       "string.empty": "Password is required and cannot be empty",
       "any.required": "Password is required",
     }),

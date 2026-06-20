@@ -1,9 +1,19 @@
 const express = require('express');
 const { prisma } = require('../config/db');
 const ApiResponse = require('../utils/apiResponse');
+const logger = require('../utils/logger');
 const { verifyToken } = require('../middleware/auth');
 
+const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
+
+// -- Global error routing: auto-wrap every handler so async errors reach the
+// global error handler in app.ts (non-destructive; any existing try/catch still runs).
+['get', 'post', 'put', 'patch', 'delete'].forEach((_m) => {
+  const _orig = router[_m].bind(router);
+  router[_m] = (path, ...handlers) =>
+    _orig(path, ...handlers.map((h) => (typeof h === 'function' ? asyncHandler(h) : h)));
+});
 
 // ============ SCHEMAS & CONSTANTS ============
 const NOTE_TAGS = ['GENERAL', 'IMPORTANT', 'FOLLOW_UP', 'TODO'];
@@ -142,7 +152,7 @@ router.get('/personal-notes', verifyToken, async (req, res) => {
       )
     );
   } catch (error) {
-    console.error('[Get Notes Error]:', error);
+    logger.error('[Get Notes Error]:', error);
     res.status(500).json(
       ApiResponse.error('Failed to fetch notes', null, 500)
     );
@@ -193,7 +203,7 @@ router.post('/personal-notes', verifyToken, async (req, res) => {
       ApiResponse.success('Note created successfully', formattedNote, 201)
     );
   } catch (error) {
-    console.error('[Create Note Error]:', error);
+    logger.error('[Create Note Error]:', error);
     res.status(500).json(
       ApiResponse.error('Failed to create note', null, 500)
     );
@@ -246,7 +256,7 @@ router.get('/personal-notes/:noteId', verifyToken, async (req, res) => {
       ApiResponse.success('Note retrieved successfully', formattedNote)
     );
   } catch (error) {
-    console.error('[Get Note Error]:', error);
+    logger.error('[Get Note Error]:', error);
     res.status(500).json(
       ApiResponse.error('Failed to fetch note', null, 500)
     );
@@ -329,7 +339,7 @@ router.patch('/personal-notes/:noteId', verifyToken, async (req, res) => {
       ApiResponse.success('Note updated successfully', formattedNote)
     );
   } catch (error) {
-    console.error('[Update Note Error]:', error);
+    logger.error('[Update Note Error]:', error);
     res.status(500).json(
       ApiResponse.error('Failed to update note', null, 500)
     );
@@ -382,7 +392,7 @@ router.delete('/personal-notes/:noteId', verifyToken, async (req, res) => {
       )
     );
   } catch (error) {
-    console.error('[Delete Note Error]:', error);
+    logger.error('[Delete Note Error]:', error);
     res.status(500).json(
       ApiResponse.error('Failed to delete note', null, 500)
     );
@@ -425,7 +435,7 @@ router.delete('/personal-notes/:noteId/permanent', verifyToken, async (req, res)
       ApiResponse.success('Note permanently deleted', { id: noteId })
     );
   } catch (error) {
-    console.error('[Permanent Delete Note Error]:', error);
+    logger.error('[Permanent Delete Note Error]:', error);
     res.status(500).json(
       ApiResponse.error('Failed to permanently delete note', null, 500)
     );
@@ -480,7 +490,7 @@ router.get('/personal-notes/stats/summary', verifyToken, async (req, res) => {
       ApiResponse.success('Notes statistics retrieved successfully', stats)
     );
   } catch (error) {
-    console.error('[Get Notes Stats Error]:', error);
+    logger.error('[Get Notes Stats Error]:', error);
     res.status(500).json(
       ApiResponse.error('Failed to fetch notes statistics', null, 500)
     );

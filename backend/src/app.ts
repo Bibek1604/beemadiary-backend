@@ -12,6 +12,7 @@ import {
   requestLogger,
 } from './middleware/security';
 import { sanitizeRequest } from './middleware/validation';
+import { boundaryGuard } from './middleware/boundaryGuard';
 import { notFoundHandler } from './middleware/errorHandler';
 import imageHandler from './utils/imageHandler';
 import dashboardRoutes from './routes/dashboard.routes';
@@ -79,6 +80,8 @@ app.use(apiSecurityHeaders);
 app.use(xssProtection);
 app.use(preventParamPollution);
 app.use(sanitizeRequest);
+// BVA guard (GLOBAL-003): reject oversized name/title fields before they reach the DB.
+app.use(boundaryGuard);
 
 // Swagger API Documentation
 const swaggerSpec = swaggerJsdoc(swaggerOptions);

@@ -28,6 +28,13 @@ const swaggerOptions = {
           bearerFormat: 'JWT',
           description: 'JWT Bearer token for authentication',
         },
+        // Lowercase alias: route-file annotations reference `bearerAuth`.
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description: 'JWT Bearer token for authentication',
+        },
       },
       schemas: {
         // ============= COMMON SCHEMAS =============
@@ -495,17 +502,6 @@ const swaggerOptions = {
           responses: {
             200: { description: 'Login successful' },
             401: { description: 'Invalid credentials' },
-          },
-        },
-      },
-      '/api/agent/logout': {
-        post: {
-          summary: 'Agent Logout',
-          tags: ['Authentication'],
-          security: [{ BearerAuth: [] }],
-          responses: {
-            200: { description: 'Logout successful' },
-            401: { description: 'Unauthorized' },
           },
         },
       },
@@ -1277,34 +1273,6 @@ const swaggerOptions = {
       },
 
       // ==================== AGENT MANAGEMENT ====================
-      '/api/agent/profile': {
-        get: {
-          summary: 'Get Agent Profile',
-          tags: ['Agent Management'],
-          security: [{ BearerAuth: [] }],
-          responses: {
-            200: { description: 'Agent profile retrieved' },
-            401: { description: 'Unauthorized' },
-          },
-        },
-        put: {
-          summary: 'Update Agent Profile',
-          tags: ['Agent Management'],
-          security: [{ BearerAuth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/Agent' },
-              },
-            },
-          },
-          responses: {
-            200: { description: 'Agent profile updated' },
-            401: { description: 'Unauthorized' },
-          },
-        },
-      },
 
       // ==================== DASHBOARD ====================
       '/api/user-panel/dashboard-overview': {
@@ -1320,36 +1288,6 @@ const swaggerOptions = {
       },
 
       // ==================== NOTIFICATIONS ====================
-      '/api/my-notifications': {
-        get: {
-          summary: 'Get Notifications',
-          tags: ['Notifications'],
-          security: [{ BearerAuth: [] }],
-          responses: {
-            200: { description: 'Notifications retrieved' },
-            401: { description: 'Unauthorized' },
-          },
-        },
-      },
-      '/api/my-notifications/{notificationId}/mark_read': {
-        post: {
-          summary: 'Mark Notification as Read',
-          tags: ['Notifications'],
-          security: [{ BearerAuth: [] }],
-          parameters: [
-            {
-              name: 'notificationId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string' },
-            },
-          ],
-          responses: {
-            200: { description: 'Notification marked as read' },
-            401: { description: 'Unauthorized' },
-          },
-        },
-      },
 
       // ==================== ANALYTICS ====================
       '/api/analytics/monthly-graph': {
@@ -1654,7 +1592,28 @@ const swaggerOptions = {
       },
     ],
   },
-  apis: ["src/routes/**/*.ts", "src/routes/**/*.js"],
+  apis: [
+    // Explicit allowlist of MOUNTED route files only (excludes unmounted/dead
+    // files such as diagnostic.routes.js & user.routes.js to avoid phantom docs).
+    'src/routes/admin.routes.ts',
+    'src/routes/admin.compat.routes.js',
+    'src/routes/auth.routes.js',
+    'src/routes/agentProfile.routes.js',
+    'src/routes/agentNotification.routes.js',
+    'src/routes/analytics.routes.js',
+    'src/routes/calendar.routes.js',
+    'src/routes/clientDocuments.routes.js',
+    'src/routes/clientEnrollment.routes.js',
+    'src/routes/dashboard-agent.routes.js',
+    'src/routes/dashboard.consolidated.routes.js',
+    'src/routes/dashboard.routes.ts',
+    'src/routes/images.routes.ts',
+    'src/routes/notes.routes.js',
+    'src/routes/policy.routes.js',
+    'src/routes/policyBankDetails.routes.js',
+    'src/routes/targets.routes.js',
+    'src/routes/upload.routes.ts',
+  ],
 };
 
 export default swaggerOptions;
