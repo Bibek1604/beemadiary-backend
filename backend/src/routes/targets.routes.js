@@ -88,6 +88,7 @@ const getPeriodRange = (targetType, periodName) => {
 const decorateTarget = async (target) => {
   const { start, end } = getPeriodRange(target.target_type, target.period_name);
 
+  // --- Enrollment count (clients enrolled in this period) ---
   let currentValue = 0;
   try {
     currentValue = await prisma.client.count({
@@ -101,17 +102,42 @@ const decorateTarget = async (target) => {
     currentValue = 0;
   }
 
-  const percentage = target.target_value > 0
-    ? Number(((currentValue / target.target_value) * 100).toFixed(2))
+  // --- Policy count (policies created by the agent in this period) ---
+  let policyCurrentValue = 0;
+  try {
+    policyCurrentValue = await prisma.policy.count({
+      where: {
+        agent_id: target.agent_id,
+        deleted_at: null,
+        created_at: { gte: start, lt: end },
+      },
+    });
+  } catch (_err) {
+    policyCurrentValue = 0;
+  }
+
+  const targetValue    = Number(target.target_value);
+  // policy_target_value defaults to enrollment target when not explicitly set
+  const policyTargetValue = Number(target.policy_target_value ?? targetValue);
+
+  const percentage = targetValue > 0
+    ? Number(((currentValue / targetValue) * 100).toFixed(2))
+    : 0;
+
+  const policyPercentage = policyTargetValue > 0
+    ? Number(((policyCurrentValue / policyTargetValue) * 100).toFixed(2))
     : 0;
 
   return {
     id: target.id,
     target_type: target.target_type,
-    target_value: Number(target.target_value),
+    target_value: targetValue,
+    policy_target_value: policyTargetValue,
     period_name: target.period_name,
     current_value: currentValue,
+    policy_current_value: policyCurrentValue,
     progress_percentage: percentage,
+    policy_progress_percentage: policyPercentage,
     created_at: target.created_at instanceof Date ? target.created_at.toISOString() : target.created_at,
     updated_at: target.updated_at instanceof Date ? target.updated_at.toISOString() : target.updated_at,
   };
@@ -180,13 +206,20 @@ router.post(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
     const agentId = req.user?.id;
     if (!agentId) return res.status(401).json(ApiResponse.error('Authentication required', null, 401));
 
-    const targetType  = parseTargetType(req.body?.target_type);
-    const targetValue = toNumber(req.body?.target_value);
+    const targetType       = parseTargetType(req.body?.target_type);
+    const targetValue      = toNumber(req.body?.target_value);
+    const policyTargetRaw  = req.body?.policy_target_value;
+    // policy_target_value is optional — defaults to enrollment target when omitted
+    const policyTargetValue = policyTargetRaw !== undefined && policyTargetRaw !== null && policyTargetRaw !== ''
+      ? toNumber(policyTargetRaw)
+      : null;
     const periodValidation = normalizePeriodName(targetType, req.body?.period_name);
 
     const errors = [];
     if (!TARGET_TYPES.includes(targetType))            errors.push('target_type must be MONTHLY or YEARLY');
     if (!Number.isInteger(targetValue) || targetValue <= 0) errors.push('target_value must be a positive integer');
+    if (policyTargetValue !== null && (!Number.isInteger(policyTargetValue) || policyTargetValue <= 0))
+      errors.push('policy_target_value must be a positive integer when provided');
     if (!periodValidation.ok)                          errors.push(periodValidation.error);
     if (errors.length > 0) return res.status(400).json(ApiResponse.error('Validation failed', errors, 400));
 
@@ -199,16 +232,17 @@ router.post(['/my-targets', '/my-targets/'], verifyToken, async (req, res) => {
       return res.status(409).json(ApiResponse.error('Target already exists for this period and type', null, 409));
     }
 
-    const created = await prisma.agentTarget.create({
-      data: {
-        id: crypto.randomUUID(),
-        agent_id: agentId,
-        target_type: targetType,
-        target_value: targetValue,
-        period_name: periodName,
-        deleted_at: null,
-      },
-    });
+    const createData = {
+      id: crypto.randomUUID(),
+      agent_id: agentId,
+      target_type: targetType,
+      target_value: targetValue,
+      period_name: periodName,
+      deleted_at: null,
+    };
+    if (policyTargetValue !== null) createData.policy_target_value = policyTargetValue;
+
+    const created = await prisma.agentTarget.create({ data: createData });
 
     const decorated = await decorateTarget(created);
     return res.status(201).json(ApiResponse.success('Target created successfully', decorated, 201));
@@ -291,6 +325,13 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
 
     const targetType  = req.body?.target_type ? parseTargetType(req.body.target_type) : current.target_type;
     const targetValue = req.body?.target_value !== undefined ? toNumber(req.body.target_value) : Number(current.target_value);
+
+    // policy_target_value: update only if provided in body
+    const policyTargetRaw = req.body?.policy_target_value;
+    const policyTargetValue = policyTargetRaw !== undefined && policyTargetRaw !== null && policyTargetRaw !== ''
+      ? toNumber(policyTargetRaw)
+      : undefined; // undefined = don't touch the stored value
+
     const periodValidation = normalizePeriodName(
       targetType,
       req.body?.period_name !== undefined ? req.body.period_name : current.period_name
@@ -299,6 +340,8 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
     const errors = [];
     if (!TARGET_TYPES.includes(targetType))            errors.push('target_type must be MONTHLY or YEARLY');
     if (!Number.isInteger(targetValue) || targetValue <= 0) errors.push('target_value must be a positive integer');
+    if (policyTargetValue !== undefined && (!Number.isInteger(policyTargetValue) || policyTargetValue <= 0))
+      errors.push('policy_target_value must be a positive integer when provided');
     if (!periodValidation.ok)                          errors.push(periodValidation.error);
     if (errors.length > 0) return res.status(400).json(ApiResponse.error('Validation failed', errors, 400));
 
@@ -314,9 +357,16 @@ router.patch(['/my-targets/:targetId', '/my-targets/:targetId/'], verifyToken, a
       return res.status(409).json(ApiResponse.error('Another target already exists for this period and type', null, 409));
     }
 
+    const updateData = {
+      target_type: targetType,
+      target_value: targetValue,
+      period_name: periodValidation.value,
+    };
+    if (policyTargetValue !== undefined) updateData.policy_target_value = policyTargetValue;
+
     const updated = await prisma.agentTarget.update({
       where: { id: current.id },
-      data: { target_type: targetType, target_value: targetValue, period_name: periodValidation.value },
+      data: updateData,
     });
 
     const decorated = await decorateTarget(updated);

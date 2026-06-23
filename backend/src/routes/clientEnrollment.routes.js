@@ -27,8 +27,8 @@ const {
 // Configure Multer for image uploads
 const storage = multer.memoryStorage();
 
-const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+const ALLOWED_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "application/pdf"];
+const ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
 const MAX_FILE_SIZE_MB = 10;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
@@ -39,14 +39,14 @@ const upload = multer({
     const ext = path.extname(file.originalname || "").toLowerCase();
     if (!ALLOWED_MIME_TYPES.includes(file.mimetype)) {
       const err = new Error(
-        "Invalid file type. Only JPG, JPEG, PNG, and WEBP images are allowed."
+        "Invalid file type. Only JPG, JPEG, PNG, WEBP images and PDF documents are allowed."
       );
       err.code = "INVALID_FILE_TYPE";
       return cb(err);
     }
     if (!ALLOWED_EXTENSIONS.has(ext)) {
       const err = new Error(
-        "Invalid file extension. Allowed: .jpg, .jpeg, .png, .webp"
+        "Invalid file extension. Allowed: .jpg, .jpeg, .png, .webp, .pdf"
       );
       err.code = "INVALID_FILE_EXTENSION";
       return cb(err);

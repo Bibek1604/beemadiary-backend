@@ -481,6 +481,7 @@ router.get("/dashboard-overview", async (_req, res) => {
       total_agents:    allAgents,
       total_companies: companies,
       total_policies:  totalPolicies,
+      total_admins:    admins,
       birthdays:              [],
       recent_alerts:          [],
       recent_notifications:   [],
